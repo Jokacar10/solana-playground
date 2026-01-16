@@ -1,5 +1,5 @@
 ################# BASE RUST INSTALLATION TO USE IN OTHER STEPS #################
-FROM ubuntu:24.04 AS rust
+FROM ubuntu:24.10 AS rust
 
 ARG DEBIAN_FRONTEND="noninteractive"
 
