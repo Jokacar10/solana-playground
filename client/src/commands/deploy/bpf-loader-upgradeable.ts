@@ -68,6 +68,7 @@ export class BpfLoaderUpgradeable {
     const { loadConcurrency } = PgCommon.setDefault(opts, {
       loadConcurrency: 8,
     });
+    const connection = PgConnection.current;
 
     // Maximal chunk of the data per tx
     const WRITE_CHUNK_SIZE =
@@ -92,6 +93,7 @@ export class BpfLoaderUpgradeable {
       if (isMissing) opts?.onMissing?.(indices.length);
 
       let i = 0;
+      let lastTxHash: string | undefined;
       await Promise.all(
         new Array(loadConcurrency).fill(null).map(async () => {
           while (1) {
@@ -111,7 +113,7 @@ export class BpfLoaderUpgradeable {
             });
 
             try {
-              await PgTx.send(ix, { wallet, computeUnitLimit });
+              lastTxHash = await PgTx.send(ix, { wallet, computeUnitLimit });
               if (!isMissing) opts?.onWrite?.(endOffset);
             } catch (e: any) {
               console.log("Buffer write error:", e.message);
@@ -119,6 +121,17 @@ export class BpfLoaderUpgradeable {
           }
         })
       );
+      if (opts?.abortController?.signal.aborted) return;
+
+      // Wait for the last transaction to confirm
+      if (lastTxHash) {
+        try {
+          await PgTx.confirm(lastTxHash);
+        } catch {
+          const confirmations = connection.commitment === "finalized" ? 32 : 1;
+          await PgCommon.sleep(confirmations * PgWeb3.DEFAULT_MS_PER_SLOT);
+        }
+      }
     };
 
     const txCount = Math.ceil(programData.length / WRITE_CHUNK_SIZE);
@@ -129,16 +142,13 @@ export class BpfLoaderUpgradeable {
     while (1) {
       if (opts?.abortController?.signal.aborted) return;
 
-      // Wait for last transaction to confirm
-      await PgCommon.sleep(500);
-
       // Even though we only get to this function after buffer account creation
       // gets confirmed, the RPC can still return `null` here if it's behind.
       const bufferAccount = await PgCommon.tryUntilSuccess(async () => {
-        const acc = await PgConnection.current.getAccountInfo(bufferPk);
+        const acc = await connection.getAccountInfo(bufferPk);
         if (!acc) throw new Error();
         return acc;
-      }, 2000);
+      }, 1000);
 
       const onChainProgramData = bufferAccount.data.slice(
         PgWeb3.BpfLoaderUpgradeableProgram.BUFFER_ACCOUNT_METADATA_SIZE,
@@ -147,16 +157,13 @@ export class BpfLoaderUpgradeable {
       );
       if (onChainProgramData.equals(programData)) break;
 
-      const missingIndices = indices
-        .map((i) => {
-          const start = i * WRITE_CHUNK_SIZE;
-          const end = start + WRITE_CHUNK_SIZE;
-          const actualSlice = programData.slice(start, end);
-          const onChainSlice = onChainProgramData.slice(start, end);
-          if (!actualSlice.equals(onChainSlice)) return i;
-          return null;
-        })
-        .filter(PgCommon.isNonNullish);
+      const missingIndices = indices.filter((i) => {
+        const start = i * WRITE_CHUNK_SIZE;
+        const end = start + WRITE_CHUNK_SIZE;
+        const actualSlice = programData.slice(start, end);
+        const onChainSlice = onChainProgramData.slice(start, end);
+        return !actualSlice.equals(onChainSlice);
+      });
       await loadBuffer(missingIndices, isMissing);
       isMissing = true;
     }
