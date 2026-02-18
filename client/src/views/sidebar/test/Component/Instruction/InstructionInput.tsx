@@ -234,10 +234,7 @@ const getSearchBarProps = (
 
   // Items
   searchBarProps.items = [
-    {
-      label: "Random",
-      value: customizable.generateRandom,
-    },
+    { label: "Random", value: customizable.generateRandom },
   ];
 
   // Generate values via `generateValueOrDefault` method and push to items.
@@ -294,10 +291,13 @@ const getSearchBarProps = (
     if (PgWallet.current) {
       pushGeneratorItem({ type: "Current wallet" });
 
-      if (PgWallet.accounts.length > 1) {
+      const pgWallets = PgWallet.accounts.map(PgWallet.create);
+      const standardWallets = PgWallet.getConnectedStandardWallets();
+      const wallets = [...pgWallets, ...standardWallets];
+      if (wallets.length > 1) {
         pushGeneratorItem({
           type: "All wallets",
-          names: PgWallet.accounts.map((acc) => acc.name),
+          names: wallets.map((acc) => acc.name),
         });
       }
     }
@@ -352,7 +352,6 @@ const getSearchBarProps = (
 
           const lowerCaseValue = value.toLowerCase();
           if (lowerCaseName.includes(lowerCaseValue)) return true;
-
           return new RegExp(lowerCaseName).test(lowerCaseValue);
         };
 
