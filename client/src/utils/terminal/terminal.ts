@@ -6,7 +6,7 @@ import { PgAutocomplete } from "./autocomplete";
 import { PgHistory } from "./history";
 import { PgShell } from "./shell";
 import { PgTty } from "./tty";
-import { OTHER_ERROR, PROGRAM_ERROR, RPC_ERROR } from "../../constants";
+import { OTHER_ERROR, RPC_ERROR } from "../../constants";
 import { PgCommon } from "../common";
 import type { CommandManager, Prefixes, PrintOptions } from "./types";
 import type { Methods, ClassReturnType, SyncOrAsync } from "../types";
@@ -61,23 +61,6 @@ export class PgTerminal {
    * Make error messages more friendly
    */
   static convertErrorMessage(msg: string) {
-    // Hex program errors
-    for (const programErrorCode in PROGRAM_ERROR) {
-      if (msg.endsWith("0x" + programErrorCode.toLowerCase())) {
-        const parts = msg.split(":");
-
-        let ixIndex = parts[2][parts[2].length - 1];
-        if (!PgCommon.isInt(ixIndex)) ixIndex = "0";
-        const programError = PROGRAM_ERROR[programErrorCode];
-
-        msg = `\n${this.bold("Instruction index:")} ${ixIndex}\n${this.bold(
-          "Reason:"
-        )} ${programError}`;
-
-        return msg;
-      }
-    }
-
     // Descriptive program errors
     if (msg.startsWith("failed to send")) {
       const parts = msg.split(":");
