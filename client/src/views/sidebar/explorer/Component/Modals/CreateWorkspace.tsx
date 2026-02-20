@@ -12,15 +12,12 @@ import {
 } from "../../../../../utils";
 
 export const CreateWorkspace = () => {
-  // Handle user input
   const [name, setName] = useState("");
   const [error, setError] = useState("");
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<FrameworkName | null>(null);
 
   const createWorkspace = async () => {
-    const { getDefaultFiles, defaultOpenFile } = PgFramework.all.find(
-      (f) => f.name === selected
-    )!;
+    const { getDefaultFiles, defaultOpenFile } = PgFramework.get(selected!);
     const { files } = await getDefaultFiles();
     await PgExplorer.createWorkspace(name, { files, defaultOpenFile });
   };
