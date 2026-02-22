@@ -101,15 +101,31 @@ async function checkProgram() {
     );
   }
 
+  if (!PgProgramInfo.onChain.deployed) {
+    if (!PgProgramInfo.kp) {
+      throw new Error(
+        "Initial deployment needs a keypair but you've only provided a public key."
+      );
+    }
+
+    if (!PgProgramInfo.kp.publicKey.equals(PgProgramInfo.pk)) {
+      throw new Error(
+        `Entered program id doesn't match the program id derived from program's keypair.
+You can fix this in 3 different ways:
+
+1. Remove the custom program id from ${PgTerminal.bold("Program ID")}
+2. Import the program keypair for the current program id
+3. Create a new program keypair`
+      );
+    }
+  }
+
   if (!PgProgramInfo.onChain.upgradable) {
     throw new Error("The program is not upgradable.");
   }
 
   const authority = PgProgramInfo.onChain.authority;
-  const hasAuthority =
-    !authority || authority.equals(PgWallet.current!.publicKey);
-
-  if (!hasAuthority) {
+  if (authority && !authority.equals(PgWallet.current!.publicKey)) {
     throw new Error(`You don't have the authority to upgrade this program.
 Program ID: ${PgProgramInfo.pk}
 Program authority: ${authority}
@@ -119,38 +135,10 @@ Your address: ${PgWallet.current!.publicKey}`);
 
 /** Deploy the current program. */
 const processDeploy = async () => {
-  const programPk = PgProgramInfo.pk!;
-  const programBuffer =
+  const programData =
     PgProgramInfo.importedProgram?.buffer ??
     (await PgServer.deploy(PgProgramInfo.uuid!));
-  const programLen = programBuffer.length;
-
-  const connection = PgConnection.current;
-  const programExists = await connection.getAccountInfo(programPk);
-
-  // Initial deploy checks
-  const programKp = PgProgramInfo.kp;
-  if (!programExists) {
-    if (!programKp) {
-      throw new Error(
-        "Initial deployment needs a keypair but you've only provided a public key."
-      );
-    }
-
-    if (!programKp.publicKey.equals(programPk)) {
-      throw new Error(
-        [
-          "Entered program id doesn't match the program id derived from program's keypair.",
-          "You can fix this in 3 different ways:",
-          `1. Remove the custom program id from ${PgTerminal.bold(
-            "Program ID"
-          )}`,
-          "2. Import the program keypair for the current program id",
-          "3. Create a new program keypair",
-        ].join("\n")
-      );
-    }
-  }
+  const programLen = programData.length;
 
   const wallet = PgWallet.current!;
   const [pgWallet, standardWallet] = wallet.isPg
@@ -159,6 +147,7 @@ const processDeploy = async () => {
 
   // Decide whether it's an initial deployment or an upgrade and calculate
   // how much SOL user needs before creating the buffer.
+  const connection = PgConnection.current;
   const [userBalance, bufferBalance] = await Promise.all([
     connection.getBalance(wallet.publicKey),
     connection.getMinimumBalanceForRentExemption(
@@ -167,6 +156,7 @@ const processDeploy = async () => {
   ]);
 
   // Balance required to deploy/upgrade (without fees)
+  const programExists = PgProgramInfo.onChain!.deployed;
   const requiredBalanceWithoutFees = programExists
     ? bufferBalance
     : 3 * bufferBalance;
@@ -252,7 +242,7 @@ const processDeploy = async () => {
   // Load buffer
   const loadBufferResult = await loadBufferWithControl(
     bufferKp.publicKey,
-    programBuffer,
+    programData,
     {
       wallet: pgWallet,
       onWrite: (offset) =>
@@ -302,13 +292,13 @@ const processDeploy = async () => {
       async () => {
         if (programExists) {
           return await BpfLoaderUpgradeable.upgradeProgram(
-            programPk,
+            PgProgramInfo.pk!,
             bufferKp.publicKey
           );
         }
 
         return await BpfLoaderUpgradeable.deployProgram(
-          programKp!,
+          PgProgramInfo.kp!,
           bufferKp.publicKey,
           programBalance,
           programLen * 2
