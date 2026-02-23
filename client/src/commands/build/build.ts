@@ -119,18 +119,45 @@ const getBuildFiles = () => {
     programPkStr = kp.publicKey.toBase58();
   }
 
+  /**
+   * Update the `declare_id!` macro in Rust source content with the current
+   * program's public key.
+   *
+   * @param content - The Rust source file content as a string
+   * @returns An object containing:
+   * - `content` - The updated source content with the new program ID injected
+   * - `updated` - A boolean indicating whether the ID was updated
+   */
   const updateIdRust = (content: string) => {
     let updated = false;
+    let insideBlockComment = false;
+    const rustDeclareIdRegex = /^(([\w]+::)*)declare_id!\("(\w*)"\)/;
+    const newContent = content
+      .split("\n")
+      .map((line) => {
+        // Track block comment opening
+        if (line.includes("/*")) insideBlockComment = true;
 
-    const rustDeclareIdRegex = /^(([\w]+::)*)declare_id!\("(\w*)"\)/gm;
-    const newContent = content.replace(rustDeclareIdRegex, (match) => {
-      const res = rustDeclareIdRegex.exec(match);
-      if (!res) return match;
-      updated = true;
+        // If inside block comment, skip line entirely
+        if (insideBlockComment) {
+          // Track block comment closing
+          if (line.includes("*/")) insideBlockComment = false;
+          return line;
+        }
 
-      // res[1] could be solana_program:: or undefined
-      return (res[1] ?? "\n") + `declare_id!("${programPkStr}")`;
-    });
+        // Skip single-line comments
+        if (line.trimStart().startsWith("//")) return line;
+
+        return line.replace(rustDeclareIdRegex, (match) => {
+          const res = rustDeclareIdRegex.exec(match);
+          if (!res) return match;
+          updated = true;
+
+          // `res[1]` could be `solana_program::` or `undefined`
+          return (res[1] ?? "") + `declare_id!("${programPkStr}")`;
+        });
+      })
+      .join("\n");
 
     return { content: newContent, updated };
   };
