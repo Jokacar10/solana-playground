@@ -379,10 +379,7 @@ class _PgWallet {
       throw new Error(`Account index '${index}' not found`);
     }
 
-    PgWallet.update({
-      state: "pg",
-      currentIndex: index,
-    });
+    PgWallet.update({ state: "pg", currentIndex: index });
   }
 
   /**
@@ -414,6 +411,17 @@ class _PgWallet {
     return PgWallet.standardWallets.filter(
       (w) => w.connected
     ) as StandardWallet<true>[];
+  }
+
+  /**
+   * Get all of the connected wallets (both playground and standard).
+   *
+   * @returns all connected wallets
+   */
+  static getConnectedWallets() {
+    return PgWallet.accounts
+      .map(PgWallet.create)
+      .concat(PgWallet.getConnectedStandardWallets());
   }
 
   /**

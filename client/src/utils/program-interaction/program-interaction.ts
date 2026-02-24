@@ -70,17 +70,9 @@ export class PgProgramInteraction {
         if (acc.generator.type !== "All wallets") return null;
 
         const generatorName = acc.generator.name;
-        const pgWalletAcc = PgWallet.accounts.find(
-          (acc) => acc.name === generatorName
+        return PgWallet.getConnectedWallets().find(
+          (wallet) => wallet.name === generatorName
         );
-        if (pgWalletAcc) return PgWallet.create(pgWalletAcc);
-
-        const standardWallet = PgWallet.getConnectedStandardWallets().find(
-          (acc) => acc.name === generatorName
-        );
-        if (standardWallet) return standardWallet;
-
-        throw new Error(`Unknown wallet generator: ${acc.generator.name}`);
       })
       .filter(PgCommon.isNonNullish);
 

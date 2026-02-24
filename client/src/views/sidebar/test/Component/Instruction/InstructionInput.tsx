@@ -291,13 +291,11 @@ const getSearchBarProps = (
     if (PgWallet.current) {
       pushGeneratorItem({ type: "Current wallet" });
 
-      const pgWallets = PgWallet.accounts.map(PgWallet.create);
-      const standardWallets = PgWallet.getConnectedStandardWallets();
-      const wallets = [...pgWallets, ...standardWallets];
+      const wallets = PgWallet.getConnectedWallets();
       if (wallets.length > 1) {
         pushGeneratorItem({
           type: "All wallets",
-          names: wallets.map((acc) => acc.name),
+          names: wallets.map((w) => w.name),
         });
       }
     }

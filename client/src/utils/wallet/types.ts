@@ -75,7 +75,7 @@ export type StandardWallet<C extends boolean = false> = {
 
 /** Non-nullable public key property (connected state) */
 interface NonNullablePublicKeyProp {
-  /** Name of the account */
+  /** Public key of the account */
   publicKey: PgWeb3.PublicKey;
 }
 
