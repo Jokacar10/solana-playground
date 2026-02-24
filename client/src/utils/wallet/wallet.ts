@@ -6,11 +6,8 @@ import {
   createDerivable,
   declareDecorator,
   derivable,
-  initable,
   updatable,
 } from "../decorators";
-import { PgSettings } from "../settings";
-import { PgTx } from "../tx";
 import { PgWeb3 } from "../web3";
 import type {
   AnyTransaction,
@@ -56,39 +53,6 @@ const storage = {
 
     localStorage.setItem(this.KEY, JSON.stringify(serializedState));
   },
-};
-
-const onDidInit = () => {
-  // Automatically airdrop
-  return PgCommon.batchChanges(async () => {
-    if (!PgSettings.wallet.automaticAirdrop) return;
-
-    // Need the current account balance to decide the airdrop
-    if (typeof PgWallet.balance !== "number") return;
-
-    // Get airdrop amount based on network (in SOL)
-    const airdropAmount = PgConnection.getAirdropAmount();
-    if (!airdropAmount) return;
-
-    // Only airdrop if the balance is less than the airdrop amount
-    if (PgWallet.balance >= airdropAmount) return;
-
-    // Current wallet should always exist when balance is a number
-    if (!PgWallet.current) return;
-
-    try {
-      const txHash = await PgConnection.current.requestAirdrop(
-        PgWallet.current.publicKey,
-        PgCommon.solToLamports(airdropAmount)
-      );
-      await PgTx.confirm(txHash);
-    } catch (e) {
-      console.log("Automatic airdrop failed:", e);
-    }
-  }, [
-    PgWallet.onDidChangeBalance,
-    PgSettings.onDidChangeWalletAutomaticAirdrop,
-  ]);
 };
 
 const derive = () => ({
@@ -238,7 +202,6 @@ const migrate = () => {
   localStorage.removeItem("walletName");
 };
 
-@initable({ onDidInit })
 @derivable(derive)
 @updatable({ defaultState, storage, migrate })
 class _PgWallet {
