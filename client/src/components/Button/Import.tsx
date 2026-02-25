@@ -1,7 +1,7 @@
 import { ChangeEvent, FC, useRef, useState } from "react";
 import styled, { css } from "styled-components";
 
-import Button, { ButtonKind } from "../Button";
+import Button, { ButtonKind } from "./Default";
 
 interface ImportButtonProps {
   onImport: (ev: ChangeEvent<HTMLInputElement>) => Promise<void>;

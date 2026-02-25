@@ -1,7 +1,7 @@
 import { FC } from "react";
 import styled from "styled-components";
 
-import Button, { ButtonKind } from "../Button";
+import Button, { ButtonKind } from "./Default";
 import { PgCommon } from "../../utils";
 
 interface ExportButtonProps {

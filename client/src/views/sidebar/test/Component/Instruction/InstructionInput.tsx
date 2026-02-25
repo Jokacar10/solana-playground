@@ -3,7 +3,7 @@ import styled from "styled-components";
 
 import FromSeed from "./FromSeed";
 import Label from "../InputLabel";
-import CopyButton from "../../../../../components/CopyButton";
+import Button from "../../../../../components/Button";
 import SearchBar, {
   SearchBarItem,
   SearchBarProps,
@@ -186,7 +186,7 @@ const InstructionInput: FC<InstructionInputProps> = ({
             {...searchBarProps}
           />
           <CopyButtonWrapper>
-            <CopyButton copyText={value} />
+            <Button.Copy copyText={value} />
           </CopyButtonWrapper>
         </InputWithCopyButtonWrapper>
       </Row>

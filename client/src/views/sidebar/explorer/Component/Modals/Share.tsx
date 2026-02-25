@@ -1,7 +1,7 @@
 import { FC, useState } from "react";
 import styled from "styled-components";
 
-import CopyButton from "../../../../../components/CopyButton";
+import Button from "../../../../../components/Button";
 import FilePicker from "../../../../../components/FilePicker";
 import Input from "../../../../../components/Input";
 import Link from "../../../../../components/Link";
@@ -85,7 +85,7 @@ const SuccessPage: FC<SuccessPageProps> = ({ shareId }) => {
 
         <SuccessInputWrapper>
           <Input value={shareLink} readOnly />
-          <CopyButton copyText={shareLink} />
+          <Button.Copy copyText={shareLink} />
         </SuccessInputWrapper>
         <SuccessLinkWrapper>
           <Link href={shareLink}>Go to the link</Link>

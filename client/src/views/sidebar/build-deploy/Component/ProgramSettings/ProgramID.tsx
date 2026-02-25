@@ -2,9 +2,6 @@ import { ChangeEvent, useEffect, useState } from "react";
 import styled, { css } from "styled-components";
 
 import Button from "../../../../../components/Button";
-import CopyButton from "../../../../../components/CopyButton";
-import ExportButton from "../../../../../components/ExportButton";
-import ImportButton from "../../../../../components/ImportButton";
 import Input from "../../../../../components/Input";
 import Modal from "../../../../../components/Modal";
 import Text from "../../../../../components/Text";
@@ -61,13 +58,13 @@ const NewKeypairModal = () => {
             The old keypair will be lost if you don't save it.
           </Text>
         </WarningTextWrapper>
-        <ExportButton
+        <Button.Export
           href={Array.from(PgProgramInfo.kp!.secretKey)}
           fileName="program-keypair.json"
           buttonKind="outline"
         >
           Save keypair
-        </ExportButton>
+        </Button.Export>
       </MainContent>
     </Modal>
   );
@@ -99,9 +96,9 @@ const Import = () => {
   };
 
   return (
-    <ImportButton accept=".json" onImport={handleImport}>
+    <Button.Import accept=".json" onImport={handleImport}>
       Import
-    </ImportButton>
+    </Button.Import>
   );
 };
 
@@ -110,12 +107,12 @@ const Export = () => {
   if (!kp) return null;
 
   return (
-    <ExportButton
+    <Button.Export
       href={Array.from(kp.secretKey)}
       fileName="program-keypair.json"
     >
       Export
-    </ExportButton>
+    </Button.Export>
   );
 };
 
@@ -133,7 +130,6 @@ const InputPk = () => {
     const { dispose } = PgProgramInfo.onDidChangePk((pk) => {
       if (pk) setVal(pk.toBase58());
     });
-
     return dispose;
   }, []);
 
@@ -146,7 +142,6 @@ const InputPk = () => {
   const handleClick = () => {
     try {
       PgProgramInfo.update({ customPk: new PgWeb3.PublicKey(val) });
-
       setUpdateInfo({ text: "Updated program id." });
       setChanged(false);
     } catch {
@@ -175,7 +170,7 @@ const InputPk = () => {
           validator={PgCommon.isPk}
           placeholder="Your program's public key"
         />
-        <CopyButton copyText={val} />
+        <Button.Copy copyText={val} />
       </InputWrapper>
       <InputWarning>
         <Warning color="warning" />
@@ -235,7 +230,6 @@ const WarningTextWrapper = styled.div`
   }
 `;
 
-// Program Id input
 const InputPkWrapper = styled.div`
   margin-top: 1rem;
 

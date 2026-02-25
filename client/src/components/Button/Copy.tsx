@@ -1,7 +1,7 @@
 import { FC } from "react";
 import styled, { css } from "styled-components";
 
-import Button from "../Button";
+import Button from "./Default";
 import Tooltip from "../Tooltip";
 import { Copy } from "../Icons";
 import { useCopy } from "../../hooks";
