@@ -64,9 +64,9 @@ export const processBundlr = async (
         `\n${PgTerminal.error("Insufficient balance for withdraw:")}`
       );
       PgTerminal.println(
-        `  -> required balance > ${LIMIT.toString()} (${Emoji.SOL} ${
-          LIMIT / PgWeb3.LAMPORTS_PER_SOL
-        })`
+        `  -> required balance > ${LIMIT.toString()} (${
+          Emoji.SOL
+        } ${PgWeb3.lamportsToSol(LIMIT)})`
       );
     }
   }

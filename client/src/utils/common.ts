@@ -234,20 +234,6 @@ export class PgCommon {
   }
 
   /**
-   * @returns lamports amount to equivalent Sol
-   */
-  static lamportsToSol(lamports: number) {
-    return lamports / PgCommon._LAMPORTS_PER_SOL;
-  }
-
-  /**
-   * @returns Sol amount to equivalent lamports
-   */
-  static solToLamports(sol: number) {
-    return sol * PgCommon._LAMPORTS_PER_SOL;
-  }
-
-  /**
    * @returns whether the given values are equal
    */
   static isEqual(value1: any, value2: any) {
@@ -1273,12 +1259,6 @@ export class PgCommon {
   static shorten(str: string, amount: number = 3) {
     return str.slice(0, amount) + "..." + str.slice(-amount);
   }
-
-  /**
-   * Intentionally not using web3.js.LAMPORTS_PER_SOL to not increase main
-   * bundle size since `PgCommon` is getting loaded at the start of the app.
-   */
-  private static _LAMPORTS_PER_SOL = 1000000000;
 
   /**
    * Repeat a `pattern` `amount` times

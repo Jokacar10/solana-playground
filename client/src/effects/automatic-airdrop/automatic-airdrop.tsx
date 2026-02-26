@@ -4,6 +4,7 @@ import {
   PgSettings,
   PgTx,
   PgWallet,
+  PgWeb3,
 } from "../../utils";
 
 export const automaticAirdrop = () => {
@@ -26,7 +27,7 @@ export const automaticAirdrop = () => {
     try {
       const txHash = await PgConnection.current.requestAirdrop(
         PgWallet.current.publicKey,
-        PgCommon.solToLamports(airdropAmount)
+        PgWeb3.solToLamports(airdropAmount)
       );
       await PgTx.confirm(txHash);
     } catch (e) {

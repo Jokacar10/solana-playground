@@ -164,11 +164,11 @@ const processDeploy = async () => {
     const msg = `${
       programExists ? "Upgrading" : "Initial deployment"
     } costs ${PgTerminal.bold(
-      PgCommon.lamportsToSol(requiredBalanceWithoutFees).toFixed(2)
+      PgWeb3.lamportsToSol(requiredBalanceWithoutFees).toFixed(2)
     )} SOL but you have ${PgTerminal.bold(
-      PgCommon.lamportsToSol(userBalance).toFixed(2)
+      PgWeb3.lamportsToSol(userBalance).toFixed(2)
     )} SOL. ${PgTerminal.bold(
-      PgCommon.lamportsToSol(bufferBalance).toFixed(2)
+      PgWeb3.lamportsToSol(bufferBalance).toFixed(2)
     )} SOL will be refunded at the end.`;
     const airdropAmount = PgConnection.getAirdropAmount();
     if (airdropAmount === null) throw new Error(msg);
@@ -190,7 +190,7 @@ const processDeploy = async () => {
   if (standardWallet) {
     // Transfer extra 0.1 SOL for fees (doesn't have to get used)
     const requiredBalance =
-      requiredBalanceWithoutFees + PgWeb3.LAMPORTS_PER_SOL / 10;
+      requiredBalanceWithoutFees + PgWeb3.solToLamports(0.1);
     const transferIx = PgWeb3.SystemProgram.transfer({
       fromPubkey: standardWallet.publicKey,
       toPubkey: pgWallet.publicKey,

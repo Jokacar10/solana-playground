@@ -108,7 +108,7 @@ const derive = () => ({
   balance: createDerivable({
     derive: async (value): Promise<number | null> => {
       // Direct value from `connection.onAccountChange`
-      if (typeof value === "number") return PgCommon.lamportsToSol(value);
+      if (typeof value === "number") return PgWeb3.lamportsToSol(value);
 
       // Check wallet status
       if (!PgWallet.current) return null;
@@ -120,7 +120,7 @@ const derive = () => ({
         const lamports = await PgConnection.current.getBalance(
           PgWallet.current.publicKey
         );
-        return PgCommon.lamportsToSol(lamports);
+        return PgWeb3.lamportsToSol(lamports);
       } catch (e: any) {
         console.log("Couldn't fetch balance:", e.message);
         return null;

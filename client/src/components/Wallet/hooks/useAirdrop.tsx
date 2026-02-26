@@ -2,11 +2,11 @@ import { useEffect, useState } from "react";
 
 import { Emoji } from "../../../constants";
 import {
-  PgCommon,
   PgConnection,
   PgTerminal,
   PgTx,
   PgWallet,
+  PgWeb3,
 } from "../../../utils";
 
 export const useAirdrop = () => {
@@ -37,7 +37,7 @@ export const useAirdrop = () => {
       // Send the airdrop request
       const txHash = await conn.requestAirdrop(
         walletPk,
-        PgCommon.solToLamports(airdropAmount)
+        PgWeb3.solToLamports(airdropAmount)
       );
 
       // Allow enough time for balance to update by waiting for confirmation

@@ -53,7 +53,7 @@ export const processWithdraw = async (
     term.println(
       `\nFound ${candyAccounts.length} candy machine(s), total amount: ${
         Emoji.SOL
-      } ${totalLamports / PgWeb3.LAMPORTS_PER_SOL}`,
+      } ${PgWeb3.lamportsToSol(totalLamports)}`,
       { noColor: true }
     );
 
@@ -71,9 +71,7 @@ export const processWithdraw = async (
             `${PgCommon.string(accountInfo.pubkey.toBase58(), {
               addSpace: { amount: 48, position: "right" },
             })} ${PgCommon.string(
-              (
-                accountInfo.account.lamports / PgWeb3.LAMPORTS_PER_SOL
-              ).toString(),
+              PgWeb3.lamportsToSol(accountInfo.account.lamports).toString(),
               { addSpace: { amount: 8 } }
             )}`
           );
