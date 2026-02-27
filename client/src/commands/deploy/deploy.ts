@@ -181,7 +181,7 @@ const processDeploy = async () => {
     );
     if (!confirmed) throw new Error("Insufficient balance");
 
-    await PgCommand.solana.execute("airdrop", airdropAmount.toString());
+    await PgCommand.airdrop.execute();
   }
 
   // If deploying from a standard wallet, transfer the required lamports for

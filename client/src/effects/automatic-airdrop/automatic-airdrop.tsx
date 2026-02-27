@@ -1,10 +1,9 @@
 import {
+  PgCommand,
   PgCommon,
   PgConnection,
   PgSettings,
-  PgTx,
   PgWallet,
-  PgWeb3,
 } from "../../utils";
 
 export const automaticAirdrop = () => {
@@ -21,18 +20,8 @@ export const automaticAirdrop = () => {
     // Only airdrop if the balance is less than the airdrop amount
     if (PgWallet.balance >= airdropAmount) return;
 
-    // Current wallet should always exist when balance is a number
-    if (!PgWallet.current) return;
-
-    try {
-      const txHash = await PgConnection.current.requestAirdrop(
-        PgWallet.current.publicKey,
-        PgWeb3.solToLamports(airdropAmount)
-      );
-      await PgTx.confirm(txHash);
-    } catch (e) {
-      console.log("Automatic airdrop failed:", e);
-    }
+    // Execute the `airdrop` command (handles the default amount)
+    await PgCommand.airdrop.execute();
   }, [
     PgWallet.onDidChangeBalance,
     PgSettings.onDidChangeWalletAutomaticAirdrop,
