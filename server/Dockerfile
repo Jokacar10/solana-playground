@@ -24,7 +24,7 @@ ENV PATH="${HOME}/.cargo/bin:${PATH}"
 FROM rust AS build
 
 WORKDIR /build
-COPY Cargo.* .
+COPY Cargo.* rust-toolchain.toml ./
 COPY src src
 RUN cargo build --release
 
