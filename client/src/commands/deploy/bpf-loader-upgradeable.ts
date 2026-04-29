@@ -248,21 +248,6 @@ export class BpfLoaderUpgradeable {
     return await PgTx.send(ix, { wallet });
   }
 
-  /** Close the program account and withdraw funds. */
-  static async closeProgram(programPk: PgWeb3.PublicKey, opts?: WalletOption) {
-    const { wallet } = this._getOptions(opts);
-
-    const ix = PgWeb3.BpfLoaderUpgradeableProgram.close({
-      closePk:
-        PgWeb3.BpfLoaderUpgradeableProgram.getProgramDataAddress(programPk),
-      recipientPk: wallet.publicKey,
-      authorityPk: wallet.publicKey,
-      programPk,
-    });
-
-    return await PgTx.send(ix, { wallet });
-  }
-
   /** Get the connection and wallet instance. */
   private static _getOptions(opts?: WalletOption) {
     const wallet = opts?.wallet ?? PgWallet.current;
