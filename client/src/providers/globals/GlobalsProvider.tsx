@@ -12,8 +12,13 @@ export const GlobalsProvider: FC = ({ children }) => {
     setLoading(true);
 
     try {
-      const { dispose } = await initAll(GLOBALS);
-      return dispose;
+      // Intentionally do not dispose globals because:
+      //
+      // - It makes app crashes irrecoverable, at least without state corruption or
+      //   unintended behavior (e.g. effects leakage).
+      // - It causes the app to crash in some cases after auto-refresh during
+      //   local development.
+      await initAll(GLOBALS);
     } catch (e: any) {
       throw new Error(
         `Error during globals initialization: ${
