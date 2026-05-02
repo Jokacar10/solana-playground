@@ -150,10 +150,12 @@ export function updatable<T extends Record<string, any>>(params: {
       // Migrate if needed
       const migrations = await params.migrate?.();
 
-      // Deep clone the state because we may mutate it
-      const state: T = structuredClone(
-        params.storage ? await params.storage.read() : params.defaultState
-      );
+      // FIXME: Mutating `state` may have unintended side-effects, and we cannot
+      // use `structuredClone` because some values, such as class instances,
+      // cannot be cloned properly.
+      const state: T = params.storage
+        ? await params.storage.read()
+        : params.defaultState;
 
       if (migrations) {
         for (const migration of migrations) {
