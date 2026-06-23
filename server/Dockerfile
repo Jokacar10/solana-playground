@@ -2,7 +2,7 @@
 ARG USER
 
 ################# BASE RUST INSTALLATION TO USE IN OTHER STEPS #################
-FROM ubuntu:24.04 AS rust
+FROM ubuntu:24.10 AS rust
 
 ARG USER
 ARG DEBIAN_FRONTEND="noninteractive"
