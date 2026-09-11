@@ -47,7 +47,6 @@ export class PgJsPackage {
    * @returns the imported package
    */
   static async import(name: string) {
-    // TODO: Cache
     const mod = await this.importChunk(
       PgCommon.joinPaths(name, this._PATHS.BUNDLE_FILE),
       { cache: true }
@@ -66,12 +65,14 @@ export class PgJsPackage {
    * @returns the imported chunk
    */
   static async importChunk(path: string, opts?: { cache?: boolean }) {
+    // Make caching per-project rather than global
+    path = PgExplorer.toAbsolutePath(this._getInternalPath(path));
     if (opts?.cache) {
       const blobUrl = this._importCache.get(path);
       if (blobUrl) return await import(/* webpackIgnore: true */ blobUrl);
     }
 
-    const chunk = await fs.readToString(this._getInternalPath(path));
+    const chunk = await fs.readToString(path);
     const blob = new Blob([chunk], { type: "text/javascript" });
     // TODO: Revoke the URL
     const blobUrl = URL.createObjectURL(blob);
