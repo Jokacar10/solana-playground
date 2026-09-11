@@ -105,7 +105,7 @@ fn generate_bundle(manifest: &Manifest) -> Result<()> {
     }
 
     // Add entries to the webpack config
-    let webpack_cfg_path = packages_path.join(WEBPACK_BASE_CONFIG_FILE);
+    let webpack_cfg_path = packages_path.join(WEBPACK_CONFIG_FILE);
     let webpack_cfg = fs::read_to_string(&webpack_cfg_path)?
         .replace("/* <DYNAMIC_ENTRIES> */", &entries.join(","));
     fs::write(webpack_cfg_path, webpack_cfg)?;
@@ -348,7 +348,7 @@ fn convert_type_files(files: Vec<(PathBuf, String)>) -> anyhow::Result<Files> {
 const BUILD_DIR: &str = "dist";
 
 /// Base `webpack` config file
-const WEBPACK_BASE_CONFIG_FILE: &str = "webpack.base.config.js";
+const WEBPACK_CONFIG_FILE: &str = "webpack.config.js";
 
 /// The default directory of where the JS packages are stored
 const NODE_MODULES: &str = "node_modules";
