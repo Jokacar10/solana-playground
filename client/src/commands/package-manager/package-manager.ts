@@ -13,6 +13,7 @@ export const packageManager = createCmd({
       name: "install",
       description: "Install packages",
       handle: async () => {
+        // TODO: Add the relevant manifest and lock file if non-existent (ask?)
         const startTime = performance.now();
         await PgJsPackage.install();
         const timePassed = (performance.now() - startTime) / 1000;

@@ -123,24 +123,12 @@ export class PgJsPackage {
 
   /** Get the manifest file content (`package.json`). */
   private static async _getManifest() {
-    try {
-      return await fs.readToString(this._PATHS.MANIFEST_FILE);
-    } catch {
-      // TODO: Make this based on framework and version
-      return await PgCommon.fetchText(
-        "/frameworks/" + this._PATHS.MANIFEST_FILE
-      );
-    }
+    return await fs.readToString(this._PATHS.MANIFEST_FILE);
   }
 
   /** Get the lock file content. */
   private static async _getLock() {
-    try {
-      return await fs.readToString(this._PATHS.LOCK_FILE);
-    } catch {
-      // TODO: Make this based on framework and version
-      return await PgCommon.fetchText("/frameworks/" + this._PATHS.LOCK_FILE);
-    }
+    return await fs.readToString(this._PATHS.LOCK_FILE);
   }
 
   /**
