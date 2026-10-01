@@ -98,6 +98,8 @@ type PublicKeyGenerator =
       programId: WithGenerator<ProgramGenerator>;
     }
   | { type: "All programs"; name: string }
+  | { type: "Token accounts"; name: string }
+  | { type: "Mint accounts"; name: string }
   | { type: "Pyth"; name: string };
 
 /** Program public key generator */
@@ -133,6 +135,8 @@ export const createGenerator = (
 
     case "All wallets":
     case "All programs":
+    case "Token accounts":
+    case "Mint accounts":
     case "Pyth":
     case "Accounts":
     case "Arguments":
@@ -170,10 +174,9 @@ export const generateValue = (
       return PgWallet.current!.publicKey.toBase58();
 
     case "All wallets": {
-      const walletAcc = PgWallet.accounts.find(
-        (acc) => acc.name === generator.name
-      )!;
-      return PgWallet.create(walletAcc).publicKey.toBase58();
+      return PgWallet.getConnectedWallets()
+        .find((wallet) => wallet.name === generator.name)!
+        .publicKey.toBase58();
     }
 
     case "From seed":
@@ -188,6 +191,10 @@ export const generateValue = (
 
     case "All programs":
       return getPrograms().find((p) => p.name === generator.name)!.programId;
+
+    case "Token accounts":
+    case "Mint accounts":
+      return generator.name;
 
     case "Pyth":
       return getPythAccounts()[generator.name];

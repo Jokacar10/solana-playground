@@ -75,29 +75,17 @@ export class PgExplorer {
   }
 
   /** Get current file path */
+  // TODO: Make this a regular method (implicit getter may cause bugs)
   static get currentFilePath() {
-    return this.tabs.at(this._currentIndex);
+    // Do not use `Array.at` because it gives incorrect results when there is no
+    // current file (`this._currentIndex === -1`)
+    if (this._currentIndex === -1) return null;
+    return this.tabs[this._currentIndex];
   }
 
   /** Get current file path index */
   private static get _currentIndex() {
     return this._explorer.currentIndex;
-  }
-
-  /**
-   * Get full path of current workspace('/' appended)
-   *
-   * @throws if the workspace doesn't exist. Shouldn't be used with temporary projects.
-   */
-  static get currentWorkspacePath() {
-    if (!this.currentWorkspaceName) {
-      throw new Error(PgWorkspace.errors.CURRENT_NOT_FOUND);
-    }
-
-    return PgCommon.joinPaths(
-      PgExplorer.PATHS.ROOT_DIR_PATH,
-      PgCommon.appendSlash(this.currentWorkspaceName)
-    );
   }
 
   /** Get current workspace name */
@@ -132,7 +120,7 @@ export class PgExplorer {
 
       // Files
       this._explorer.files = Array.isArray(params.files)
-        ? this._convertToExplorerFiles(params.files)
+        ? this._toExplorerFiles(params.files)
         : params.files;
 
       // Tabs, current
@@ -177,6 +165,7 @@ export class PgExplorer {
 
   /**
    * If the project is not temporary(default):
+   *
    * - Name and path checks
    * - Create new item in `indexedDB`
    * - If create is successful, also create the item in the state
@@ -192,17 +181,17 @@ export class PgExplorer {
       skipNameValidation?: boolean;
       override?: boolean;
       openOptions?: {
-        dontOpen?: boolean;
-        onlyRefreshIfAlreadyOpen?: boolean;
+        noOpen?: boolean;
+        refreshIfAlreadyOpen?: boolean;
       };
     }
   ) {
-    const fullPath = this.convertToFullPath(path);
+    const absolutePath = this.toAbsolutePath(path);
 
     // Invalid name
     if (
       !opts?.skipNameValidation &&
-      !PgExplorer.isItemNameValid(PgExplorer.getItemNameFromPath(fullPath))
+      !PgExplorer.isItemNameValid(PgExplorer.getItemNameFromPath(absolutePath))
     ) {
       throw new Error(PgExplorer.errors.INVALID_NAME);
     }
@@ -210,39 +199,41 @@ export class PgExplorer {
     const files = this.files;
 
     // Check whether the item already exists
-    if (files[fullPath] && !opts?.override) {
+    if (files[absolutePath] && !opts?.override) {
       throw new Error(PgExplorer.errors.ALREADY_EXISTS);
     }
 
-    const itemType = PgExplorer.getItemTypeFromPath(fullPath);
+    const itemType = PgExplorer.getItemTypeFromPath(absolutePath);
 
     // Ordering of `indexedDB` calls and state calls matter. If `indexedDB` call fails,
     // state will not change. Can't say the same if the ordering was in reverse.
     if (itemType.file) {
       if (!this.isTemporary) {
-        await this.fs.writeFile(fullPath, content, { createParents: true });
+        await this.fs.writeFile(absolutePath, content, { createParents: true });
       }
 
-      files[fullPath] = {
+      files[absolutePath] = {
         content,
-        meta: files[fullPath]?.meta ?? {},
+        meta: files[absolutePath]?.meta ?? {},
       };
 
-      if (!opts?.openOptions || opts?.openOptions?.onlyRefreshIfAlreadyOpen) {
-        const isCurrentFile = this.currentFilePath === fullPath;
+      if (!opts?.openOptions || opts?.openOptions?.refreshIfAlreadyOpen) {
+        const isCurrentFile = this.currentFilePath === absolutePath;
 
         // Close the file if we are overriding to correctly display the new content
-        if (opts?.override && isCurrentFile) this.closeFile(fullPath);
+        if (opts?.override && isCurrentFile) this.closeFile(absolutePath);
 
         // Open if it's the current file or there is no open options
-        if (!opts?.openOptions || isCurrentFile) this.openFile(fullPath);
+        if (!opts?.openOptions || isCurrentFile) this.openFile(absolutePath);
       }
     }
     // Folder
     else {
-      if (!this.isTemporary) await this.fs.createDir(fullPath);
+      if (!opts?.override && !this.isTemporary) {
+        await this.fs.createDir(absolutePath);
+      }
 
-      files[fullPath] = {};
+      files[absolutePath] = {};
     }
 
     PgCommon.createAndDispatchCustomEvent(this.events.ON_DID_CREATE_ITEM);
@@ -251,12 +242,46 @@ export class PgExplorer {
   }
 
   /**
+   * Save item to state, and if non-temporary, to the file system.
+   *
+   * This is intended to be used only when the item is known to exist.
+   *
+   * This method can also be used to create new items. However, this usage is
+   * discouraged because there is a dedicated {@link PgExplorer.createItem}
+   * method that is better suited for the initial file creation.
+   *
+   * @param path file path
+   * @param content file content (can be omitted for directories)
+   * @param opts options
+   */
+  static async saveItem(
+    path: string,
+    content: string = "",
+    opts?: {
+      noOpen?: boolean;
+      refreshIfAlreadyOpen?: boolean;
+    }
+  ) {
+    const openOptions = PgCommon.setDefault(opts, {
+      noOpen: true,
+      refreshIfAlreadyOpen: true,
+    });
+    return await this.createItem(path, content, {
+      override: true,
+      skipNameValidation: true,
+      openOptions,
+    });
+  }
+
+  /**
    * If the project is not temporary(default):
+   *
    * - Name and path checks
    * - Rename in `indexedDB`
    * - If rename is successful also rename item in the state
    *
    * If the project is temporary:
+   *
    * - Name and path checks
    * - Rename in state
    */
@@ -265,8 +290,8 @@ export class PgExplorer {
     newPath: string,
     opts?: { skipNameValidation?: boolean; override?: boolean }
   ) {
-    oldPath = this.convertToFullPath(oldPath);
-    newPath = this.convertToFullPath(newPath);
+    oldPath = this.toAbsolutePath(oldPath);
+    newPath = this.toAbsolutePath(newPath);
 
     // Return if there is no change
     if (PgCommon.isPathsEqual(newPath, oldPath)) return;
@@ -365,33 +390,35 @@ export class PgExplorer {
 
   /**
    * If the project is not temporary(default):
+   *
    * - Delete from `indexedDB`(recursively)
    * - If delete is successful, delete from state
    *
    * If the project is temporary:
+   *
    * - Delete from state
    */
   static async deleteItem(path: string) {
-    const fullPath = this.convertToFullPath(path);
+    const absolutePath = this.toAbsolutePath(path);
 
     // Can't delete src folder
-    if (PgCommon.isPathsEqual(fullPath, this.getCurrentSrcPath())) {
+    if (PgCommon.isPathsEqual(absolutePath, this.getCurrentSrcPath())) {
       throw new Error(PgExplorer.errors.SRC_DELETE);
     }
 
     if (!this.isTemporary) {
-      const metadata = await this.fs.getMetadata(fullPath);
-      if (metadata.isFile()) await this.fs.removeFile(fullPath);
-      else await this.fs.removeDir(fullPath, { recursive: true });
+      const metadata = await this.fs.getMetadata(absolutePath);
+      if (metadata.isFile()) await this.fs.removeFile(absolutePath);
+      else await this.fs.removeDir(absolutePath, { recursive: true });
     }
 
     // If we are deleting current file's parent(s), we need to set the current
     // file to the last tab
-    const isCurrentFile = this.currentFilePath === fullPath;
-    const isCurrentParent = this.currentFilePath?.startsWith(fullPath);
+    const isCurrentFile = this.currentFilePath === absolutePath;
+    const isCurrentParent = this.currentFilePath?.startsWith(absolutePath);
 
     for (const path in this.files) {
-      if (path.startsWith(fullPath)) {
+      if (path.startsWith(absolutePath)) {
         delete this.files[path];
         this.closeFile(path);
       }
@@ -399,7 +426,7 @@ export class PgExplorer {
 
     // Deleting all elements from a folder results with the parent folder
     // disappearing, add the folder back to mitigate
-    this.files[PgExplorer.getParentPathFromPath(fullPath)] = {};
+    this.files[PgExplorer.getParentPathFromPath(absolutePath)] = {};
 
     // Change the current file to the closest tab when current file or its
     // parent is deleted
@@ -410,7 +437,7 @@ export class PgExplorer {
 
     PgCommon.createAndDispatchCustomEvent(
       this.events.ON_DID_DELETE_ITEM,
-      fullPath
+      absolutePath
     );
 
     await this.saveMeta();
@@ -467,11 +494,8 @@ export class PgExplorer {
       }
       this.setTabs(this.tabs.map(getFullPath));
 
-      // Save files from state to `indexedDB`
       await this._writeAllFromState();
-
       await this.switchWorkspace(name);
-
       return;
     }
 
@@ -545,30 +569,21 @@ export class PgExplorer {
    */
   static async renameWorkspace(newName: string) {
     newName = newName.trim();
-    if (!this._workspace) {
-      throw new Error(PgWorkspace.errors.NOT_FOUND);
-    }
-    if (!this.currentWorkspaceName) {
-      throw new Error(PgWorkspace.errors.CURRENT_NOT_FOUND);
-    }
     if (!this.isWorkspaceNameValid(newName)) {
       throw new Error(PgWorkspace.errors.INVALID_NAME);
     }
+
+    const workspacePath = this.getRequiredCurrentWorkspacePath();
     if (this.allWorkspaceNames!.includes(newName)) {
       throw new Error(PgWorkspace.errors.ALREADY_EXISTS);
     }
 
     // Rename workspace folder
-    const newPath = this.currentWorkspacePath.replace(
-      this.currentWorkspaceName,
-      newName
-    );
-    await this.renameItem(this.currentWorkspacePath, newPath, {
-      skipNameValidation: true,
-    });
+    const newPath = workspacePath.replace(this.currentWorkspaceName!, newName);
+    await this.renameItem(workspacePath, newPath, { skipNameValidation: true });
 
     // Rename workspace in state
-    this._workspace.rename(newName);
+    this._workspace!.rename(newName);
 
     await this.switchWorkspace(newName);
 
@@ -577,25 +592,21 @@ export class PgExplorer {
 
   /** Delete the current workspace. */
   static async deleteWorkspace() {
-    if (!this._workspace) {
-      throw new Error(PgWorkspace.errors.NOT_FOUND);
-    }
-    if (!this.currentWorkspaceName) {
-      throw new Error(PgWorkspace.errors.CURRENT_NOT_FOUND);
-    }
+    const workspacePath = this.getRequiredCurrentWorkspacePath();
+    const workspace = this._workspace!;
+    const workspaceName = this.currentWorkspaceName!;
 
     // Delete from `indexedDB`
-    await this.deleteItem(this.currentWorkspacePath);
+    await this.deleteItem(workspacePath);
 
     // Delete from state
-    this._workspace.delete(this.currentWorkspaceName);
+    workspace.delete(workspaceName);
 
-    const workspaceCount = this._workspace.allNames.length;
-    if (workspaceCount) {
-      const lastWorkspace = this._workspace.allNames[workspaceCount - 1];
+    if (workspace.allNames.length) {
+      const lastWorkspace = workspace.allNames.at(-1)!;
       await this.switchWorkspace(lastWorkspace);
     } else {
-      this._workspace.setCurrent({ allNames: [] });
+      workspace.setCurrent({ allNames: [] });
       await this._saveWorkspaces();
       PgCommon.createAndDispatchCustomEvent(
         this.events.ON_DID_SWITCH_WORKSPACE
@@ -611,19 +622,22 @@ export class PgExplorer {
    * NOTE: Only runs when the project is not temporary.
    */
   static async saveMeta() {
+    if (this.isTemporary) return;
+
     const paths = Object.keys(this.files);
-    if (!this.currentWorkspaceName || !paths.length) return;
+    if (!paths.length) return;
 
     // Check whether the files start with the correct workspace path
+    const workspacePath = this.getRequiredCurrentWorkspacePath();
     const isInvalidState = paths.some(
-      (path) => !path.startsWith(this.currentWorkspacePath)
+      (path) => !path.startsWith(workspacePath)
     );
     if (isInvalidState) return;
 
     const metaFile = paths
       .reduce((acc, path) => {
         // Only save the files in the current workspace
-        if (path.startsWith(this.currentWorkspacePath)) {
+        if (path.startsWith(workspacePath)) {
           acc.push({
             path,
             isTabs: this.tabs.includes(path),
@@ -640,7 +654,7 @@ export class PgExplorer {
         if (!b.isTabs) return -1;
         return this.tabs.indexOf(a.path) - this.tabs.indexOf(b.path);
       })
-      .map((meta) => ({ ...meta, path: this.getRelativePath(meta.path) }));
+      .map((meta) => ({ ...meta, path: this.toRelativePath(meta.path) }));
 
     // Save file
     await this.fs.writeFile(
@@ -658,18 +672,7 @@ export class PgExplorer {
    * @returns all files as an array of [path, content] tuples
    */
   static getAllFiles() {
-    return this._convertToTupleFiles(this.files);
-  }
-
-  /**
-   * Save the file to the state only.
-   *
-   * @param path file path
-   * @param content file content
-   */
-  static saveFileToState(path: string, content: string) {
-    path = this.convertToFullPath(path);
-    if (this.files[path]) this.files[path].content = content;
+    return this._toTupleFiles(this.files);
   }
 
   /**
@@ -678,7 +681,7 @@ export class PgExplorer {
    * @param path path of the file, defaults to the current file if it exists
    */
   static getFile(path: string): FullFile | null {
-    path = this.convertToFullPath(path);
+    path = this.toAbsolutePath(path);
     const itemInfo = this.files[path];
     if (itemInfo) return { path, ...this.files[path] };
     return null;
@@ -702,7 +705,7 @@ export class PgExplorer {
    * @returns the groupped folder items
    */
   static getFolderContent(path: string) {
-    path = PgCommon.appendSlash(PgExplorer.convertToFullPath(path));
+    path = PgCommon.appendSlash(PgExplorer.toAbsolutePath(path));
 
     const files = this.files;
     const filesAndFolders: Folder = { folders: [], files: [] };
@@ -766,7 +769,7 @@ export class PgExplorer {
    * @param path file path
    */
   static openFile(path: string) {
-    path = this.convertToFullPath(path);
+    path = this.toAbsolutePath(path);
 
     // Return if it's already the current file
     if (this.currentFilePath === path) return;
@@ -791,7 +794,7 @@ export class PgExplorer {
    * @param path file path
    */
   static closeFile(path: string) {
-    path = this.convertToFullPath(path);
+    path = this.toAbsolutePath(path);
 
     // If closing the current file, change the current file to the next tab
     if (this.currentFilePath === path) {
@@ -801,9 +804,15 @@ export class PgExplorer {
     }
 
     // Update tabs and the current index
-    if (this.currentFilePath) {
+    //
+    // NOTE: This is actually required to be stored because removing the tab
+    // may make `this.currentFilePath` `undefined`, which then makes the current
+    // index `-1`. Custom getter is the source of the problem, as it makes it
+    // hard to spot when the value changed.
+    const currentFilePath = this.currentFilePath;
+    if (currentFilePath) {
       this._explorer.tabs.splice(this.tabs.indexOf(path), 1);
-      this._explorer.currentIndex = this.tabs.indexOf(this.currentFilePath);
+      this._explorer.currentIndex = this.tabs.indexOf(currentFilePath);
     }
 
     PgCommon.createAndDispatchCustomEvent(this.events.ON_DID_CLOSE_FILE);
@@ -846,7 +855,7 @@ export class PgExplorer {
    * @param position position data
    */
   static saveEditorPosition(path: string, position: Position) {
-    path = this.convertToFullPath(path);
+    path = this.toAbsolutePath(path);
 
     this.files[path].meta ??= {};
     this.files[path].meta!.position = position;
@@ -862,45 +871,45 @@ export class PgExplorer {
   }
 
   /**
-   * Get the path without the workspace path prefix.
-   *
-   * @param fullPath full path
-   * @returns the relative path
-   */
-  static getRelativePath(fullPath: string) {
-    // /src/lib.rs -> src/lib.rs
-    if (PgExplorer.isTemporary) return fullPath.substring(1);
-
-    // /name/src/lib.rs -> src/lib.rs
-    return fullPath.replace(PgExplorer.currentWorkspacePath, "");
-  }
-
-  /**
-   * Get the canonical path, i.e. the full path from the project root and
-   * directory paths end with `/`.
+   * Get the canonical path, i.e. the absolute path with directory paths ending
+   * with `/`.
    *
    * @param path item path
    * @returns the canonical path
    */
-  static getCanonicalPath(path: string) {
-    path = PgExplorer.convertToFullPath(path);
+  static toCanonicalPath(path: string) {
+    path = PgExplorer.toAbsolutePath(path);
     if (PgExplorer.getItemTypeFromPath(path).file) return path;
     return PgCommon.appendSlash(path);
   }
 
+  /**
+   * Get the path without the current project path prefix.
+   *
+   * @param path item path
+   * @returns the relative path
+   */
+  static toRelativePath(path: string) {
+    // /src/lib.rs -> src/lib.rs
+    if (PgExplorer.isTemporary) return path.substring(1);
+
+    // /name/src/lib.rs -> src/lib.rs
+    return path.replace(PgExplorer.getRequiredCurrentWorkspacePath(), "");
+  }
+
   // TODO: Path module
   /**
-   * Convert the given path to a full path.
+   * Convert the given path to an absolute path.
    *
    * @param path path to convert
-   * @returns the full path
+   * @returns the absolute path
    */
-  static convertToFullPath(path: string) {
+  static toAbsolutePath(path: string) {
     // Return absolute path
-    if (path.startsWith(this.PATHS.ROOT_DIR_PATH)) return path;
+    if (path.startsWith(PgExplorer.PATHS.ROOT_DIR_PATH)) return path;
 
     // Convert to absolute path if it doesn't start with '/'
-    return PgCommon.joinPaths(this.getProjectRootPath(), path);
+    return PgCommon.joinPaths(PgExplorer.getProjectRootPath(), path);
   }
 
   /**
@@ -911,9 +920,8 @@ export class PgExplorer {
    * @returns the current project root path
    */
   static getProjectRootPath() {
-    return this.isTemporary
-      ? this.PATHS.ROOT_DIR_PATH
-      : this.currentWorkspacePath;
+    if (this.isTemporary) return this.PATHS.ROOT_DIR_PATH;
+    return this.getRequiredCurrentWorkspacePath();
   }
 
   /**
@@ -927,6 +935,39 @@ export class PgExplorer {
       this.PATHS.SRC_DIRNAME
     );
     return PgCommon.appendSlash(srcPath);
+  }
+
+  /**
+   * Get the absolute path of the current workspace (`/` appended), or `null` if
+   * not in a workspace.
+   *
+   * @returns the workspace path
+   */
+  static getCurrentWorkspacePath() {
+    if (!this.currentWorkspaceName) return null;
+
+    return PgCommon.joinPaths(
+      PgExplorer.PATHS.ROOT_DIR_PATH,
+      PgCommon.appendSlash(this.currentWorkspaceName)
+    );
+  }
+
+  /**
+   * Get the absolute path of the current workspace (`/` appended).
+   *
+   * @throws if not currently in a workspace
+   * @returns the workspace path
+   */
+  static getRequiredCurrentWorkspacePath() {
+    if (!this._workspace) {
+      throw new Error(PgWorkspace.errors.NOT_FOUND);
+    }
+    if (!this.currentWorkspaceName) {
+      throw new Error(PgWorkspace.errors.CURRENT_NOT_FOUND);
+    }
+
+    // Previous checks guarantee definition
+    return this.getCurrentWorkspacePath()!;
   }
 
   /* --------------------------- Change listeners --------------------------- */
@@ -1067,9 +1108,8 @@ export class PgExplorer {
    * Only the current workspace at a time will be in the memory.
    */
   private static async _initCurrentWorkspace() {
-    if (!this._workspace) {
-      throw new Error(PgWorkspace.errors.NOT_FOUND);
-    }
+    const workspacePath = this.getRequiredCurrentWorkspacePath();
+    const workspace = this._workspace!;
 
     // Reset files
     this._explorer.files = {};
@@ -1087,9 +1127,7 @@ export class PgExplorer {
       const subItemPaths = itemNames
         .filter(PgExplorer.isItemNameValid)
         .map((itemName) => {
-          return PgExplorer.getCanonicalPath(
-            PgCommon.joinPaths(path, itemName)
-          );
+          return PgExplorer.toCanonicalPath(PgCommon.joinPaths(path, itemName));
         });
       for (const subItemPath of subItemPaths) {
         const metadata = await this.fs.getMetadata(subItemPath);
@@ -1109,7 +1147,7 @@ export class PgExplorer {
     };
 
     try {
-      await setupFiles(this.currentWorkspacePath);
+      await setupFiles(workspacePath);
     } catch (e: any) {
       console.log("Couldn't setup files:", e.message);
 
@@ -1118,21 +1156,26 @@ export class PgExplorer {
       // current workspace. To fix this, set the current workspace name to
       // either the last workspace, or reset all workspaces in the case of no
       // valid workspace directory in `/`.
-      if (this._workspace.allNames.length) {
+      if (workspace.allNames.length) {
         const rootDirs = await this.fs.readDir(PgExplorer.PATHS.ROOT_DIR_PATH);
         const workspaceDirs = rootDirs.filter(PgExplorer.isItemNameValid);
         if (!workspaceDirs.length) {
           // Reset workspaces since there is no workspace directories
           this._workspace = new PgWorkspace();
         } else {
-          // Open the last workspace
-          const lastWorkspaceName = workspaceDirs[workspaceDirs.length - 1];
-          this._workspace.rename(lastWorkspaceName);
+          // Remove the current workspace.
+          //
+          // NOTE: Intentionally avoiding using `this.deleteWorkspace`, in order
+          // to keep the files in case we want to recover in the future.
+          if (workspace.currentName) workspace.delete(workspace.currentName);
+
+          // Switch to the last available workspace
+          const lastWorkspaceName = workspaceDirs.at(-1)!;
+          workspace.setCurrentName(lastWorkspaceName);
         }
 
         await this._saveWorkspaces();
         await this._initCurrentWorkspace();
-
         return;
       }
 
@@ -1148,7 +1191,7 @@ export class PgExplorer {
       const lsExplorerStr = localStorage.getItem("explorer");
       if (lsExplorerStr) {
         // Create a default workspace
-        this._workspace.create(PgWorkspace.DEFAULT_WORKSPACE_NAME);
+        workspace.create(PgWorkspace.DEFAULT_WORKSPACE_NAME);
         // Save workspaces
         await this._saveWorkspaces();
 
@@ -1157,16 +1200,12 @@ export class PgExplorer {
         for (const path in lsFiles) {
           const oldData = lsFiles[path];
           delete lsFiles[path];
-          lsFiles[
-            path.replace(
-              PgExplorer.PATHS.ROOT_DIR_PATH,
-              this.currentWorkspacePath
-            )
-          ] = {
-            content: oldData.content,
-            // @ts-ignore // ignoring because the type of oldData changed
-            meta: { current: oldData.current, tabs: oldData.tabs },
-          };
+          lsFiles[path.replace(PgExplorer.PATHS.ROOT_DIR_PATH, workspacePath)] =
+            {
+              content: oldData.content,
+              // @ts-ignore // ignoring because the type of oldData changed
+              meta: { current: oldData.current, tabs: oldData.tabs },
+            };
         }
         this._explorer.files = lsFiles;
       } else {
@@ -1183,7 +1222,7 @@ export class PgExplorer {
     }
 
     // Load metadata info from `indexedDB`
-    let metaFile = await this.fs.readToJSONOrDefault<ItemMetaFile>(
+    let metaFile = await this.fs.readToJsonOrDefault<ItemMetaFile>(
       PgWorkspace.METADATA_PATH,
       []
     );
@@ -1213,26 +1252,26 @@ export class PgExplorer {
       }
     }
 
-    // Metadata file paths are relative, convert to full path
-    const fullPathMetaFile = metaFile.map((meta) => ({
+    // Metadata file paths are relative, convert to absolute path
+    const absolutePathMetaFile = metaFile.map((meta) => ({
       ...meta,
-      path: this.convertToFullPath(meta.path),
+      path: this.toAbsolutePath(meta.path),
     }));
 
     // Tabs
-    const tabs = fullPathMetaFile
+    const tabs = absolutePathMetaFile
       .filter((meta) => meta.isTabs)
       .map((meta) => meta.path);
     this.setTabs(tabs);
 
     // Current
-    const current = fullPathMetaFile.find((meta) => meta.isCurrent);
+    const current = absolutePathMetaFile.find((meta) => meta.isCurrent);
     this._explorer.currentIndex = current
       ? this.tabs.indexOf(current.path)
       : -1;
 
     // Metadata
-    for (const itemMeta of fullPathMetaFile) {
+    for (const itemMeta of absolutePathMetaFile) {
       const file = this.files[itemMeta.path];
       if (file?.content !== undefined) {
         file.meta = { position: itemMeta.position };
@@ -1260,7 +1299,7 @@ export class PgExplorer {
    * @returns the workspaces state
    */
   private static async _getWorkspaces() {
-    return await this.fs.readToJSONOrDefault(
+    return await this.fs.readToJsonOrDefault(
       PgWorkspace.WORKSPACES_CONFIG_PATH,
       PgWorkspace.DEFAULT
     );
@@ -1271,7 +1310,6 @@ export class PgExplorer {
     const workspaces = await this._getWorkspaces();
     this._workspace ??= new PgWorkspace();
     this._workspace.setCurrent(workspaces);
-
     await this._saveWorkspaces();
   }
 
@@ -1310,6 +1348,7 @@ export class PgExplorer {
     SRC_DIRNAME: "src",
     CLIENT_DIRNAME: "client",
     TESTS_DIRNAME: "tests",
+    WORKSPACE_DIRNAME: ".workspace",
   };
 
   /**
@@ -1405,7 +1444,7 @@ export class PgExplorer {
   }
 
   /**
-   * Get the eleemnt from its path.
+   * Get the element from its path.
    *
    * @param path item path
    * @returns the element
@@ -1470,8 +1509,9 @@ export class PgExplorer {
 
     // Toggle inside folder
     const insideFolderEl = el.nextElementSibling;
-    if (insideFolderEl)
+    if (insideFolderEl) {
       insideFolderEl.classList.remove(PgView.classNames.HIDDEN);
+    }
   }
 
   /**
@@ -1559,7 +1599,7 @@ export class PgExplorer {
    *
    * @returns all files as an array of [path, content] tuples
    */
-  private static _convertToTupleFiles(explorerFiles: ExplorerFiles) {
+  private static _toTupleFiles(explorerFiles: ExplorerFiles) {
     const tupleFiles: TupleFiles = [];
     for (const path in explorerFiles) {
       const content = explorerFiles[path].content;
@@ -1575,12 +1615,14 @@ export class PgExplorer {
    * @param tupleFiles tuple files to convert
    * @returns the converted `ExplorerFiles`
    */
-  private static _convertToExplorerFiles(tupleFiles: TupleFiles) {
+  private static _toExplorerFiles(tupleFiles: TupleFiles) {
     const explorerFiles: ExplorerFiles = {};
-
     for (const [path, content] of tupleFiles) {
-      const fullPath = PgCommon.joinPaths(PgExplorer.PATHS.ROOT_DIR_PATH, path);
-      explorerFiles[fullPath] = { content };
+      const absolutePath = PgCommon.joinPaths(
+        PgExplorer.PATHS.ROOT_DIR_PATH,
+        path
+      );
+      explorerFiles[absolutePath] = { content };
     }
 
     return explorerFiles;
@@ -1593,7 +1635,7 @@ export class PgExplorer {
    * @returns the default open file path
    */
   private static _getDefaultOpenFile(files: TupleFiles | ExplorerFiles) {
-    if (!Array.isArray(files)) files = this._convertToTupleFiles(files);
+    if (!Array.isArray(files)) files = this._toTupleFiles(files);
 
     let defaultOpenFile: string | undefined;
     const libRsFile = files.find(([path]) => path.endsWith("lib.rs"));

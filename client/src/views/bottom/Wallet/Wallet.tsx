@@ -1,4 +1,3 @@
-import { useCallback } from "react";
 import styled, { css } from "styled-components";
 
 import Button from "../../../components/Button";
@@ -9,14 +8,10 @@ import { PgCommand } from "../../../utils";
 export const Wallet = () => {
   const wallet = useWallet();
 
-  // Using a callback because this function might be resolved later than the
-  // mount of this component
-  const connect = useCallback(() => PgCommand.connect.execute(), []);
-
   return (
     <Tooltip element="Toggle Playground Wallet">
       <ConnectButton
-        onClick={connect}
+        onClick={() => PgCommand.connect.execute()}
         kind="transparent"
         leftIcon={<WalletStatus isConnected={!!wallet} />}
       >
@@ -38,8 +33,7 @@ const ConnectButton = styled(Button)`
     border: none;
 
     &:hover {
-      background: ${theme.views.bottom.default.color +
-      theme.default.transparency.low};
+      background: ${theme.views.bottom.color + theme.default.transparency.low};
     }
   `}
 `;

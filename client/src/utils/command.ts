@@ -1,12 +1,6 @@
 import { PgCommon } from "./common";
 import { PgTerminal } from "./terminal";
-import type {
-  Arrayable,
-  Disposable,
-  Getable,
-  SyncOrAsync,
-  ValueOf,
-} from "./types";
+import type { Arrayable, Disposable, Getable, SyncOrAsync } from "./types";
 
 /** Terminal command creation parameter */
 export type CommandParam<
@@ -20,8 +14,15 @@ export type CommandParam<
   name: N;
   /** Description that will be seen in the `help` command */
   description: string;
+  /**
+   * Whether the command is a proxy to another command (e.g. WASM wrappers).
+   *
+   * This disables argument and option validation, as the validation should be
+   * done in the actual command.
+   */
+  proxy?: boolean;
   /* Only process the command if the condition passes */
-  preCheck?: Arrayable<() => SyncOrAsync<void>>;
+  preChecks?: Arrayable<() => SyncOrAsync<void>>;
 } & (WithSubcommands<S> | WithHandle<A, O, R>);
 
 type WithSubcommands<S> = {
@@ -47,6 +48,9 @@ type WithHandle<A, O, R> = {
 };
 
 type ParsedInput<A, O> = {
+  /** Parsed tokens */
+  tokens: string[];
+  // TODO: Remove and pass `tokens` to the WASM commands
   /** Raw input */
   raw: string;
   /** Parsed arguments */
@@ -57,28 +61,48 @@ type ParsedInput<A, O> = {
 
 /** Recursively map argument types */
 type ParsedArgs<A> = A extends [infer Head, ...infer Tail]
-  ? Head extends Arg<infer N, infer V>
+  ? Head extends Arg<infer N, infer V, infer P>
     ? (Head["optional"] extends true
-        ? { [K in N]?: Head["multiple"] extends true ? V[] : V }
-        : { [K in N]: Head["multiple"] extends true ? V[] : V }) &
+        ? {
+            [K in N]?: ArgValue<Head, V, P>;
+          }
+        : {
+            [K in N]: ArgValue<Head, V, P>;
+          }) &
         ParsedArgs<Tail>
     : never
   : {};
 
+type ArgValue<A extends Arg, V, P> = A["multiple"] extends true
+  ? A["parse"] extends NonNullable<A["parse"]>
+    ? P[]
+    : V[]
+  : A["parse"] extends NonNullable<A["parse"]>
+  ? P
+  : V;
+
 /** Recursively map option types */
 type ParsedOptions<O> = O extends [infer Head, ...infer Tail]
-  ? Head extends Option<infer N, infer V>
+  ? Head extends Option<infer N, infer V, infer P>
     ? (Head["takeValue"] extends true
-        ? { [K in N]?: V }
-        : Head["values"] extends Getable<V[]>
-        ? { [K in N]?: V }
+        ? { [K in N]?: OptionValue<Head, V, P> }
         : { [K in N]?: boolean }) &
         ParsedOptions<Tail>
     : never
   : {};
 
+type OptionValue<O extends Option, V, P> = O["parse"] extends NonNullable<
+  O["parse"]
+>
+  ? P
+  : V;
+
 /** Command argument */
-export type Arg<N extends string = string, V extends string = string> = {
+export type Arg<
+  N extends string = string,
+  V extends string = string,
+  P = unknown
+> = {
   /** Name of the argument */
   name: N;
   /** Description of the argument */
@@ -89,21 +113,37 @@ export type Arg<N extends string = string, V extends string = string> = {
   multiple?: boolean;
   /** Accepted values */
   values?: V[] | ((token: string, tokens: string[]) => V[]);
+  /** Parse the argument */
+  parse?: (token: string, tokens: string[]) => P;
 };
 
 /** Command option */
-export type Option<N extends string = string, V extends string = string> = {
+export type Option<
+  N extends string = string,
+  V extends string = string,
+  P = unknown
+> = {
   /** Name of the option */
   name: N;
   /** Description of the option */
   description?: string;
   /** Short form of the option passed with a single dash (`-`) */
   short?: boolean | string;
-  /** Whether to take value for the option */
-  takeValue?: boolean;
-  /** Accepted values */
-  values?: Getable<V[]>;
-};
+} & (
+  | {
+      /** Whether to take value for the option */
+      takeValue: true;
+      /** Accepted values */
+      values?: Getable<V[]>;
+      /** Parse the option */
+      parse?: (token: string, tokens: string[]) => P;
+    }
+  | {
+      takeValue?: never;
+      values?: never;
+      parse?: never;
+    }
+);
 
 /** Inferred terminal command implementation */
 export type Command<
@@ -138,12 +178,16 @@ type ExecutableCommand<
    * @param cb callback function to run when the command starts running
    * @returns a dispose function to clear the event
    */
-  onDidStart(cb: (input: string | null) => void): Disposable;
+  onDidStart(cb: (input: string[] | null) => unknown): Disposable;
   /**
    * @param cb callback function to run when the command finishes running
    * @returns a dispose function to clear the event
    */
-  onDidFinish(cb: (result: Awaited<R>) => void): Disposable;
+  onDidFinish(
+    cb: (
+      result: { ok: Awaited<R>; err?: never } | { err: Error; ok?: never }
+    ) => void
+  ): Disposable;
 };
 
 /** Name of all the available commands (only code) */
@@ -213,7 +257,7 @@ export class PgCommandManager {
       [key: string]: Completions | CompletionArg | CompletionOption;
     }
     const recursivelyGetCompletions = (
-      commands: ValueOf<InternalCommands>[],
+      commands: Command<string, any[], any[], any[], any>[],
       completions: Completions = {}
     ) => {
       for (const cmd of commands) {
@@ -272,11 +316,9 @@ export class PgCommandManager {
         );
       }
 
-      const input = tokens.join(" ");
-
       // Dispatch start event
       const eventNames = PgCommandManager._getEventNames(topCmd.name);
-      PgCommon.createAndDispatchCustomEvent(eventNames.start, input);
+      PgCommon.createAndDispatchCustomEvent(eventNames.start, tokens);
 
       let cmd: Command<string, Arg[], Option[], any[], any> = topCmd;
       const args = [];
@@ -289,10 +331,17 @@ export class PgCommandManager {
         const subcmd = cmd.subcommands?.find((cmd) => cmd.name === token);
         if (subcmd) cmd = subcmd;
 
-        // Handle checks
-        if (cmd.preCheck) {
-          const preChecks = PgCommon.toArray(cmd.preCheck);
-          for (const preCheck of preChecks) await preCheck();
+        // Handle pre-checks
+        if (cmd.preChecks) {
+          const preChecks = PgCommon.toArray(cmd.preChecks);
+          try {
+            for (const preCheck of preChecks) await preCheck();
+          } catch (e) {
+            PgCommon.createAndDispatchCustomEvent(eventNames.finish, {
+              err: e,
+            });
+            throw e;
+          }
         }
 
         // Early continue if it's not the end of the command
@@ -315,8 +364,8 @@ ${PgTerminal.formatList(cmd.subcommands!)}`);
           break;
         }
 
-        const hasArgsOrOpts = cmd.args?.length || cmd.options!.length > 1;
-        if (hasArgsOrOpts) {
+        // Skip argument and option validation if proxy
+        if (!topCmd.proxy) {
           // Handle `help` option
           if (nextToken === "--help" || nextToken === "-h") {
             const usagePrefix = `Usage: ${[
@@ -351,20 +400,17 @@ ${PgTerminal.formatList(cmd.subcommands!)}`);
               lines.push(
                 `${usagePrefix} ${usageArgs}`,
                 "Arguments:",
-                PgTerminal.formatList(argList, { align: "y" })
+                PgTerminal.formatList(argList)
               );
             }
             if (cmd.options) {
               const optList = cmd.options.map((opt) => [
-                `${opt.short ? `-${opt.short}, ` : "    "}--${opt.name} ${
+                `${opt.short ? `-${opt.short}, ` : ""}--${opt.name} ${
                   opt.takeValue ? `<${opt.name.toUpperCase()}>` : ""
                 }`,
                 opt.description ?? "",
               ]);
-              lines.push(
-                "Options:",
-                PgTerminal.formatList(optList, { align: "y" })
-              );
+              lines.push("Options:", PgTerminal.formatList(optList));
             }
 
             PgTerminal.println(lines.join("\n\n"));
@@ -382,8 +428,8 @@ ${PgTerminal.formatList(cmd.subcommands!)}`);
               }
 
               const isOpt = argOrOpt.startsWith("-");
-              if (isOpt && cmd.options) {
-                const opt = cmd.options.find(
+              if (isOpt) {
+                const opt = cmd.options?.find(
                   (o) =>
                     "--" + o.name === argOrOpt || "-" + o.short === argOrOpt
                 );
@@ -391,7 +437,7 @@ ${PgTerminal.formatList(cmd.subcommands!)}`);
 
                 opts.push(argOrOpt);
                 if (opt.takeValue) takeValue = true;
-              } else if (cmd.args) {
+              } else {
                 args.push(argOrOpt);
               }
             }
@@ -419,7 +465,7 @@ Available subcommands: ${cmd.subcommands.map((cmd) => cmd.name).join(", ")}`
         }
 
         // Parse args
-        const parsedArgs: Record<string, Arrayable<string>> = {};
+        const parsedArgs: Record<string, Arrayable<unknown>> = {};
         if (cmd.args) {
           for (const i in cmd.args) {
             const arg = cmd.args[i];
@@ -428,8 +474,13 @@ Available subcommands: ${cmd.subcommands.map((cmd) => cmd.name).join(", ")}`
               : args[i]
               ? [args[i]]
               : [];
-            if (!inputArgs.length && !arg.optional) {
-              throw new Error(`Argument not specified: \`${arg.name}\``);
+            if (!inputArgs.length) {
+              if (!arg.optional) {
+                throw new Error(`Argument not specified: \`${arg.name}\``);
+              }
+
+              // Optional argument value not specified, skip
+              continue;
             }
 
             // Validate values if specified
@@ -451,12 +502,19 @@ Available subcommands: ${cmd.subcommands.map((cmd) => cmd.name).join(", ")}`
               }
             }
 
-            parsedArgs[arg.name] = arg.multiple ? inputArgs : inputArgs[0];
+            if (arg.parse) {
+              const parse = PgCommandManager._createParse("argument", arg);
+              parsedArgs[arg.name] = arg.multiple
+                ? inputArgs.map((token) => parse(token, tokens))
+                : parse(inputArgs[0], tokens);
+            } else {
+              parsedArgs[arg.name] = arg.multiple ? inputArgs : inputArgs[0];
+            }
           }
         }
 
         // Parse options
-        const parsedOpts: Record<string, string | boolean> = {};
+        const parsedOpts: Record<string, unknown> = {};
         if (cmd.options) {
           for (const opt of cmd.options) {
             const i = opts.findIndex(
@@ -483,7 +541,9 @@ Available subcommands: ${cmd.subcommands.map((cmd) => cmd.name).join(", ")}`
                 }
               }
 
-              parsedOpts[opt.name] = val;
+              parsedOpts[opt.name] = opt.parse
+                ? PgCommandManager._createParse("option", opt)(val, tokens)
+                : val;
             } else {
               parsedOpts[opt.name] = true;
             }
@@ -491,16 +551,22 @@ Available subcommands: ${cmd.subcommands.map((cmd) => cmd.name).join(", ")}`
         }
 
         // Run the command processor
-        const result = await cmd.handle({
-          raw: input,
-          args: parsedArgs,
-          options: parsedOpts,
-        });
-
-        // Dispatch finish event
-        PgCommon.createAndDispatchCustomEvent(eventNames.finish, result);
-
-        return result;
+        let result;
+        try {
+          const ret = await cmd.handle({
+            tokens,
+            raw: tokens.join(" "),
+            args: parsedArgs,
+            options: parsedOpts,
+          });
+          result = { ok: ret };
+          return ret;
+        } catch (e) {
+          result = { err: e };
+          throw e;
+        } finally {
+          PgCommon.createAndDispatchCustomEvent(eventNames.finish, result);
+        }
       }
     });
   }
@@ -536,6 +602,27 @@ Available subcommands: ${cmd.subcommands.map((cmd) => cmd.name).join(", ")}`
     return {
       start: "ondidrunstart" + name,
       finish: "ondidrunfinish" + name,
+    };
+  }
+
+  /** Create a parse function with better error messages. */
+  private static _createParse<T extends Arg | Option>(
+    kind: "argument" | "option",
+    item: T
+  ): NonNullable<T["parse"]> {
+    const parse = item.parse;
+    if (!parse) throw new Error(`Parse not defined: ${item.name}`);
+
+    return (...args) => {
+      try {
+        return parse(...args);
+      } catch (e: any) {
+        throw new Error(
+          `Failed to parse ${kind}: \`${item.name}\`${
+            e.message ? `: ${e.message}` : ""
+          }`
+        );
+      }
     };
   }
 }

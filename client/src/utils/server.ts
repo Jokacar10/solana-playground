@@ -5,7 +5,7 @@ import { PgSettings } from "./settings";
 import type { TupleFiles } from "./explorer";
 
 /** Rust `Option` type */
-type Option<T> = T | null | undefined;
+type Option<T> = T | null;
 
 /** `/build` request */
 interface BuildRequest {
@@ -22,6 +22,22 @@ interface BuildRequest {
     /** Whether to enable Anchor safety checks */
     safetyChecks?: Option<boolean>;
   }>;
+}
+
+/** `/bundle` request */
+interface BundleRequest {
+  /** Package manifest file (`package.json`) */
+  manifest: string;
+  /** Package lock file */
+  lock?: Option<string>;
+  /**
+   * Package manager command to execute.
+   *
+   * The first element is assumed to be the package manager name.
+   *
+   * If omitted, defaults to installation-only using the server default.
+   */
+  command?: Option<string[]>;
 }
 
 /** `/new` request */
@@ -41,20 +57,19 @@ export class PgServer {
    * @returns the build response
    */
   static async build(req: BuildRequest) {
-    /** `/build` response */
     interface BuildResponse {
       /** Build output */
       stderr: string;
       /** UUID of the program */
-      uuid: string | null;
+      uuid: Option<string>;
       /** Anchor IDL */
-      idl: Idl | null;
+      idl: Option<Idl>;
     }
 
     const response = await this._send("/build", {
       post: { body: JSON.stringify(req) },
+      unstable: PgSettings.experimental.unstable,
     });
-
     return (await response.json()) as BuildResponse;
   }
 
@@ -65,12 +80,39 @@ export class PgServer {
    * client. The deployment process is done in the client.
    *
    * @param uuid unique project id
-   * @returns the program ELF as `Buffer`
+   * @returns the program binary bytes
    */
   static async deploy(uuid: string) {
-    const response = await this._send(`/deploy/${uuid}`);
+    const response = await this._send(`/deploy/${uuid}`, {
+      unstable: PgSettings.experimental.unstable,
+    });
     const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
+    return new Uint8Array(arrayBuffer);
+  }
+
+  /**
+   * Bundle ESM.
+   *
+   * @param req bundle request
+   * @returns the bundle response
+   */
+  static async bundle(req: BundleRequest) {
+    interface BundleResponse {
+      /** Manifest file */
+      manifest: string;
+      /** Lock file */
+      lock: string;
+      /** Bundle files */
+      bundle: TupleFiles;
+      /** Type declaration files */
+      types: TupleFiles;
+    }
+
+    const response = await this._send("/bundle", {
+      post: { body: JSON.stringify(req) },
+      unstable: PgSettings.experimental.unstable,
+    });
+    return (await response.json()) as BundleResponse;
   }
 
   /**
@@ -83,7 +125,10 @@ export class PgServer {
     /** `/share` response */
     type ShareResponse = ShareNewRequest["explorer"];
 
-    const response = await this._send(`/share/${id}`, { cache: true });
+    const response = await this._send(`/share/${id}`, {
+      cache: true,
+      useDbServer: process.env.NODE_ENV === "production",
+    });
     return (await response.json()) as ShareResponse;
   }
 
@@ -99,44 +144,51 @@ export class PgServer {
 
     const response = await this._send("/new", {
       post: { body: JSON.stringify(req) },
+      useDbServer: process.env.NODE_ENV === "production",
     });
-
     return (await response.text()) as ShareNewResponse;
   }
 
   /**
    * Send an HTTP request to the Playground server.
    *
-   * @throws when the response is not OK with the decoded response
+   * @param opts server send request options
+   * @throws when the response is not OK (with the decoded response)
    * @returns the HTTP response
    */
   private static async _send(
     path: string,
-    options?: { post?: { body: string }; cache?: boolean }
+    opts?: {
+      cache?: boolean;
+      post?: { body: string };
+      useDbServer?: boolean;
+      unstable?: boolean;
+    }
   ) {
     const requestInit: RequestInit = {};
+    if (!opts?.cache) requestInit.cache = "no-store";
 
-    if (options?.post) {
+    if (opts?.post) {
       requestInit.method = "POST";
-      requestInit.headers = {
-        "Content-Type": "application/json",
-      };
-      requestInit.body = options.post.body;
+      requestInit.headers = { "Content-Type": "application/json" };
+      requestInit.body = opts.post.body;
     }
 
-    if (!options?.cache) {
-      requestInit.cache = "no-store";
-    }
+    const serverUrl = opts?.useDbServer
+      ? "https://api.solpg.io"
+      : PgSettings.server.endpoint;
+    if (opts?.unstable) path = PgCommon.joinPaths("unstable", path);
+    const requestUrl = PgCommon.joinPaths(serverUrl, path);
+    try {
+      const response = await fetch(requestUrl, requestInit);
+      if (!response.ok) {
+        const message = await response.text();
+        throw new Error(message);
+      }
 
-    const response = await fetch(
-      PgCommon.joinPaths(PgSettings.server.endpoint, path),
-      requestInit
-    );
-    if (!response.ok) {
-      const message = await response.text();
-      throw new Error(message);
+      return response;
+    } catch (e: any) {
+      throw new Error(`Server request failed (${requestUrl}): ${e?.message}`);
     }
-
-    return response;
   }
 }

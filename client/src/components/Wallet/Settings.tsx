@@ -26,19 +26,21 @@ const Settings: FC<SettingsProps> = ({ showRename }) => {
   const { airdrop, airdropCondition } = useAirdrop();
   const { darken, lighten } = useDarken();
 
-  const [, copyAddress] = useCopy(PgWallet.current?.publicKey.toBase58()!);
-
-  const isPg = !!PgWallet.current?.isPg;
+  const wallet = PgWallet.current!;
+  const isPg = wallet.isPg;
+  const [copied, copyAddress] = useCopy(wallet.publicKey.toBase58());
 
   const defaultSettings: MenuItemProps[] = [
     {
-      name: "Copy address",
+      name: copied ? "Copied address" : "Copy address",
       onClick: copyAddress,
+      color: copied ? "success" : undefined,
       icon: <Copy />,
     },
     {
       name: "Airdrop",
       onClick: airdrop,
+      hoverColor: "success",
       showCondition: airdropCondition,
       icon: <Airdrop />,
     },
@@ -85,7 +87,7 @@ const Settings: FC<SettingsProps> = ({ showRename }) => {
         ? `Disconnect from ${wallet.name}`
         : `Connect to ${wallet.name}`,
       onClick: () => PgCommand.connect.execute(wallet.name.toLowerCase()),
-      hoverColor: "secondary",
+      hoverColor: wallet.connected ? "error" : "secondary",
       icon: <Img src={wallet.icon} alt={wallet.name} />,
     })
   );

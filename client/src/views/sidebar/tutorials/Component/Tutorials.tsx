@@ -12,6 +12,9 @@ interface TutorialsProps {
 }
 
 const Tutorials: FC<TutorialsProps> = ({ filters, ...props }) => {
+  // FIXME: `props.tutorials` should always be defined
+  if (!props.tutorials) return null;
+
   return filters ? (
     <FilterGroups items={props.tutorials} filters={filters} />
   ) : (

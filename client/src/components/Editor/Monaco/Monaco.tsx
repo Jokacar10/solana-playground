@@ -10,14 +10,16 @@ import {
   PgEditor,
   PgExplorer,
   PgLanguage,
-  PgPackage,
   PgProgramInfo,
+  PgSettings,
   PgTerminal,
   PgTheme,
+  PgWasmPackage,
 } from "../../../utils";
 import {
   useAsyncEffect,
   useKeybind,
+  useRenderOnChange,
   useSendAndReceiveCustomEvent,
 } from "../../../hooks";
 
@@ -32,7 +34,7 @@ const Monaco = () => {
     // Compiler options
     const compilerOptions: monaco.languages.typescript.CompilerOptions = {
       lib: ["es2020"],
-      target: monaco.languages.typescript.ScriptTarget.ES2017,
+      target: monaco.languages.typescript.ScriptTarget.ES2020,
       module: monaco.languages.typescript.ModuleKind.ESNext,
       moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
       allowNonTsExtensions: true,
@@ -178,7 +180,7 @@ const Monaco = () => {
 
     // Initialize language grammars and configurations
     const { dispose } = await PgCommon.transition(() => {
-      return initLanguages(PgTheme.convertToTextMateTheme(theme));
+      return initLanguages(PgTheme.toTextMateTheme(theme));
     });
 
     setIsThemeSet(true);
@@ -186,9 +188,28 @@ const Monaco = () => {
     return dispose;
   }, [theme]);
 
+  // Create editor
+  useEffect(() => {
+    if (editor || !isThemeSet || !monacoRef.current) return;
+
+    setEditor(
+      monaco.editor.create(monacoRef.current, {
+        automaticLayout: true,
+        fontLigatures: true,
+      })
+    );
+  }, [editor, isThemeSet]);
+
+  // Dispose editor on unmount
+  useEffect(() => {
+    if (editor) return () => editor.dispose();
+  }, [editor]);
+
   // Set font
   useEffect(() => {
-    editor?.updateOptions({
+    if (!editor) return;
+
+    editor.updateOptions({
       fontFamily: theme.components.editor.default.fontFamily,
     });
   }, [editor, theme]);
@@ -214,21 +235,42 @@ const Monaco = () => {
     return dispose;
   }, [editor]);
 
-  // Create editor
-  useEffect(() => {
-    if (editor || !isThemeSet || !monacoRef.current) return;
+  // Set keybinding
+  const keybinding = useRenderOnChange(PgSettings.onDidChangeEditorKeybinding);
+  useAsyncEffect(async () => {
+    if (!editor) return;
 
-    setEditor(
-      monaco.editor.create(monacoRef.current, {
-        automaticLayout: true,
-        fontLigatures: true,
-      })
-    );
-  }, [editor, isThemeSet]);
+    switch (keybinding) {
+      case "default":
+        return;
+      case "vim": {
+        const { initVimMode } = await import("monaco-vim");
 
-  // Dispose editor
+        // NOTE: It is required to store the result as a variable to avoid the
+        // `Cannot read properties of undefined (reading 'dispatch')` error on
+        // disposal.
+        //
+        // TODO: Show status bar
+        const vimMode = initVimMode(editor);
+
+        // Also required to create a callback; cannot `return vimMode.dispose`
+        return () => vimMode.dispose();
+      }
+      default:
+        throw new Error(`Unhandled keybinding: ${keybinding}`);
+    }
+  }, [editor, keybinding]);
+
+  // Set other settings
   useEffect(() => {
-    if (editor) return () => editor.dispose();
+    if (!editor) return;
+
+    const disposables = [
+      PgSettings.onDidChangeEditorWordWrap((ww) => {
+        editor.updateOptions({ wordWrap: ww ? "on" : "off" });
+      }),
+    ];
+    return () => disposables.forEach(({ dispose }) => dispose());
   }, [editor]);
 
   // Set editor state
@@ -347,30 +389,18 @@ const Monaco = () => {
     if (!editor) return;
 
     let timeoutId: NodeJS.Timeout;
-
     const { dispose } = editor.onDidChangeModelContent(() => {
       timeoutId && clearTimeout(timeoutId);
       timeoutId = setTimeout(async () => {
-        if (!PgExplorer.currentFilePath) return;
+        const currentFilePath = PgExplorer.currentFilePath;
+        if (!currentFilePath) return;
 
-        const args: [string, string] = [
-          PgExplorer.currentFilePath,
-          editor.getValue(),
-        ];
-
-        // Save to state
-        PgExplorer.saveFileToState(...args);
-
-        // Saving to state is enough if it's a temporary project
-        if (PgExplorer.isTemporary) return;
-
-        // Save to `indexedDB`
         try {
-          await PgExplorer.fs.writeFile(...args);
+          await PgExplorer.saveItem(currentFilePath, editor.getValue(), {
+            refreshIfAlreadyOpen: false,
+          });
         } catch (e: any) {
-          console.log(
-            `Error saving file ${PgExplorer.currentFilePath}. ${e.message}`
-          );
+          console.log(`Auto-save failed: ${e.message}`);
         }
       }, 500);
     });
@@ -412,7 +442,7 @@ const Monaco = () => {
           const model = editor.getModel();
           if (!model) return;
 
-          const { rustfmt } = await PgPackage.import("rustfmt");
+          const { rustfmt } = await PgWasmPackage.import("rustfmt");
 
           let result;
           try {
@@ -549,7 +579,7 @@ const Monaco = () => {
             ""
           );
 
-          const formattedCode = PgCommon.prettyJSON(
+          const formattedCode = PgCommon.toPrettyJson(
             JSON.parse(editor.getValue())
           );
           const searchIndex = formattedCode.indexOf(searchText);
@@ -651,6 +681,12 @@ const Monaco = () => {
     const disposables = monaco.languages.getLanguages().map((language) => {
       return monaco.languages.onLanguage(language.id, async () => {
         try {
+          // Do not dispose here because `monaco-editor` caches the `onLanguage`
+          // listener, resulting in `init` running only once independent of
+          // mounts and unmounts.
+          //
+          // TODO: Consider finding another way to re-run after a remount and
+          // dispose each time on unmount.
           const { init } = await import(`./languages/${language.id}/init`);
           await init();
         } catch (e: any) {

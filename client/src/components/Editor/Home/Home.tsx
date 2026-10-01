@@ -9,18 +9,22 @@ import { ResourceProps, RESOURCES } from "./resources";
 import { TutorialProps, TUTORIALS } from "./tutorials";
 import { External, ShortArrow } from "../../Icons";
 import { PROJECT_NAME } from "../../../constants";
-import { PgTheme, PgView } from "../../../utils";
+import { PgFramework, PgTheme, PgView } from "../../../utils";
 
 const Home = () => {
   // This prevents unnecessarily fetching the home content for a frame when the
   // app is first mounted
-  const [show, setShow] = useState(false);
-
+  const [resources, setResources] = useState<ResourceProps[]>();
   useEffect(() => {
-    setShow(true);
+    setResources(
+      PgFramework.all
+        .filter((f) => f.docs)
+        .map((f) => ({ ...f, ...f.docs } as ResourceProps))
+        .concat(RESOURCES)
+    );
   }, []);
 
-  if (!show) return null;
+  if (!resources) return null;
 
   return (
     <Wrapper id={PgView.ids.HOME}>
@@ -30,7 +34,7 @@ const Home = () => {
         <ResourcesWrapper>
           <ResourcesTitle>Resources</ResourcesTitle>
           <ResourceCardsWrapper>
-            {RESOURCES.map((r, i) => (
+            {resources.map((r, i) => (
               <Resource key={i} {...r} />
             ))}
           </ResourceCardsWrapper>
@@ -58,13 +62,13 @@ const Home = () => {
 
 const Wrapper = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.default)};
+    ${PgTheme.toCss(theme.views.main.primary.home.default)};
   `}
 `;
 
 const ProjectTitle = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.title)};
+    ${PgTheme.toCss(theme.views.main.primary.home.title)};
   `}
 `;
 
@@ -76,13 +80,13 @@ const ContentWrapper = styled.div`
 
 const ResourcesWrapper = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.resources.default)};
+    ${PgTheme.toCss(theme.views.main.primary.home.resources.default)};
   `}
 `;
 
 const ResourcesTitle = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.resources.title)};
+    ${PgTheme.toCss(theme.views.main.primary.home.resources.title)};
   `}
 `;
 
@@ -93,18 +97,18 @@ const ResourceCardsWrapper = styled.div`
 `;
 
 const Resource: FC<ResourceProps> = ({
-  title,
-  text,
+  name,
+  description,
   url,
-  src,
+  icon,
   circleImage,
 }) => (
   <ResourceCard>
     <ResourceTitle>
-      <ResourceImg src={src} $circleImage={circleImage} />
-      {title}
+      <ResourceImg src={icon} $circleImage={circleImage} />
+      {name}
     </ResourceTitle>
-    <ResourceDescription>{text}</ResourceDescription>
+    <ResourceDescription>{description}</ResourceDescription>
     <ResourceButtonWrapper>
       <Link href={url}>
         <ResourceButton rightIcon={<External />}>Learn more</ResourceButton>
@@ -115,21 +119,19 @@ const Resource: FC<ResourceProps> = ({
 
 const ResourceCard = styled(Card)`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(
-      theme.views.main.primary.home.resources.card.default
-    )};
+    ${PgTheme.toCss(theme.views.main.primary.home.resources.card.default)};
   `}
 `;
 
 const ResourceTitle = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.resources.card.title)};
+    ${PgTheme.toCss(theme.views.main.primary.home.resources.card.title)};
   `}
 `;
 
 const ResourceImg = styled(Img)<{ $circleImage?: boolean }>`
   ${({ theme, $circleImage }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.resources.card.image)};
+    ${PgTheme.toCss(theme.views.main.primary.home.resources.card.image)};
 
     ${$circleImage && "border-radius: 50%"};
   `};
@@ -137,9 +139,7 @@ const ResourceImg = styled(Img)<{ $circleImage?: boolean }>`
 
 const ResourceDescription = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(
-      theme.views.main.primary.home.resources.card.description
-    )};
+    ${PgTheme.toCss(theme.views.main.primary.home.resources.card.description)};
   `}
 `;
 
@@ -150,21 +150,19 @@ const ResourceButtonWrapper = styled.div`
 
 const ResourceButton = styled(Button)`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(
-      theme.views.main.primary.home.resources.card.button
-    )};
+    ${PgTheme.toCss(theme.views.main.primary.home.resources.card.button)};
   `}
 `;
 
 const TutorialsWrapper = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.tutorials.default)};
+    ${PgTheme.toCss(theme.views.main.primary.home.tutorials.default)};
   `}
 `;
 
 const TutorialsTitle = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.tutorials.title)};
+    ${PgTheme.toCss(theme.views.main.primary.home.tutorials.title)};
   `}
 `;
 
@@ -198,7 +196,7 @@ const getSrc = (url: string) => {
 
 const TutorialCard = styled(Card)`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.views.main.primary.home.tutorials.card)};
+    ${PgTheme.toCss(theme.views.main.primary.home.tutorials.card)};
   `}
 `;
 

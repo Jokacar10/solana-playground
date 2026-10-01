@@ -77,7 +77,7 @@ export class PgRouter {
         disposable = (await route?.handle(params!))!;
       } catch (e: any) {
         console.log("ROUTE ERROR:", e.message);
-        this.navigate();
+        this.navigate(PgCommon.joinPaths("/error", path));
       }
     });
   }
@@ -184,7 +184,7 @@ export class PgRouter {
       // Get the matching parts
       const startIndex = templatePath.indexOf(OPEN);
       if (startIndex === -1) {
-        if (PgRouter.isPathsEqual(templatePath, subPath)) return {};
+        if (PgRouter.isPathsEqual(templatePath, subPath)) return;
 
         throw new Error("Doesn't match");
       }
@@ -230,7 +230,6 @@ export class PgRouter {
         );
       }
     };
-
     recursivelyMapValues(path);
 
     return result as PathParameter<P>;
@@ -250,8 +249,8 @@ if (process.env.NODE_ENV !== "production") {
       throw new Error(
         [
           `Route: ${route} and ${path} mismatch:`,
-          `expected (${PgCommon.prettyJSON(expectedParams)})`,
-          `actual: ${PgCommon.prettyJSON(actualParams)}`,
+          `expected (${PgCommon.toPrettyJson(expectedParams)})`,
+          `actual: ${PgCommon.toPrettyJson(actualParams)}`,
         ].join("\n")
       );
     }

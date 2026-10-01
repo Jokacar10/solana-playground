@@ -6,11 +6,8 @@ import {
   createDerivable,
   declareDecorator,
   derivable,
-  initable,
   updatable,
 } from "../decorators";
-import { PgSettings } from "../settings";
-import { PgTx } from "../tx";
 import { PgWeb3 } from "../web3";
 import type {
   AnyTransaction,
@@ -58,56 +55,13 @@ const storage = {
   },
 };
 
-const onDidInit = () => {
-  // Automatically airdrop
-  return PgCommon.batchChanges(async () => {
-    if (!PgSettings.wallet.automaticAirdrop) return;
-
-    // Need the current account balance to decide the airdrop
-    if (typeof PgWallet.balance !== "number") return;
-
-    // Get airdrop amount based on network (in SOL)
-    const airdropAmount = PgConnection.getAirdropAmount();
-    if (!airdropAmount) return;
-
-    // Only airdrop if the balance is less than the airdrop amount
-    if (PgWallet.balance >= airdropAmount) return;
-
-    // Current wallet should always exist when balance is a number
-    if (!PgWallet.current) return;
-
-    try {
-      const txHash = await PgConnection.current.requestAirdrop(
-        PgWallet.current.publicKey,
-        PgCommon.solToLamports(airdropAmount)
-      );
-      await PgTx.confirm(txHash);
-    } catch (e) {
-      console.log("Automatic airdrop failed:", e);
-    }
-  }, [
-    PgWallet.onDidChangeBalance,
-    PgSettings.onDidChangeWalletAutomaticAirdrop,
-  ]);
-};
-
 const derive = () => ({
-  /** A Wallet Standard wallet adapter */
-  standard: createDerivable({
-    derive: (): StandardWallet | null => {
-      const standardWallet = PgWallet.standardWallets.find(
-        (wallet) => wallet.name === PgWallet.standardName
-      );
-      return standardWallet ?? null;
-    },
-    onChange: ["standardWallets", "standardName"],
-  }),
-
   /**
    * The current active wallet.
    *
    * It will be one of the following:
-   * - The Playground Wallet
+   *
+   * - A Playground wallet
    * - A Wallet Standard wallet
    * - `null` if not connected.
    */
@@ -127,24 +81,42 @@ const derive = () => ({
           return PgWallet.create(currentAccount);
         }
 
-        case "sol":
-          if (!PgWallet.standard || PgWallet.standard.connecting) return null;
-          if (!PgWallet.standard.connected) await PgWallet.standard.connect();
-          return PgWallet.standard as StandardWallet<true>;
+        case "sol": {
+          const standard = PgWallet.standardWallets.find(
+            (wallet) => wallet.name === PgWallet.standardName
+          );
+          if (!standard || standard.connecting) return null;
+          if (!standard.connected) await standard.connect();
+          return standard as StandardWallet<true>;
+        }
 
         case "disconnected":
         case "setup":
           return null;
       }
     },
-    onChange: ["state", "accounts", "currentIndex", "standard"],
+    onChange: [
+      "state",
+      "accounts",
+      "currentIndex",
+      "standardWallets",
+      "standardName",
+    ],
+    // Do not cache because changing standard wallets accounts inside extensions
+    // keeps the same object in memory, and thus making the value stale when
+    // comparing cached object values by reference.
+    //
+    // TODO: Should we allow customizing the logic? For example:
+    // `cache: (value: Wallet | null) => !value || value.isPg`
+    noCache: true,
   }),
 
+  // TODO: Use the raw lamports value?
   /** Balance of the current wallet in SOL */
   balance: createDerivable({
     derive: async (value): Promise<number | null> => {
       // Direct value from `connection.onAccountChange`
-      if (typeof value === "number") return PgCommon.lamportsToSol(value);
+      if (typeof value === "number") return PgWeb3.lamportsToSol(value);
 
       // Check wallet status
       if (!PgWallet.current) return null;
@@ -152,15 +124,10 @@ const derive = () => ({
       // Check connection status (it can be `undefined` at the start of the app)
       if (!PgConnection.isConnected) return null;
 
-      try {
-        const lamports = await PgConnection.current.getBalance(
-          PgWallet.current.publicKey
-        );
-        return PgCommon.lamportsToSol(lamports);
-      } catch (e: any) {
-        console.log("Couldn't fetch balance:", e.message);
-        return null;
-      }
+      const lamports = await PgConnection.current.getBalance(
+        PgWallet.current.publicKey
+      );
+      return PgWeb3.lamportsToSol(lamports);
     },
     onChange: [
       "current",
@@ -238,7 +205,6 @@ const migrate = () => {
   localStorage.removeItem("walletName");
 };
 
-@initable({ onDidInit })
 @derivable(derive)
 @updatable({ defaultState, storage, migrate })
 class _PgWallet {
@@ -306,13 +272,10 @@ class _PgWallet {
    * @param index account index
    */
   static rename(name: string, index: number = PgWallet.currentIndex) {
-    // Validate name
     PgWallet.validateAccountName(name);
-
-    PgWallet.accounts[index].name = name;
-
-    // Update the accounts
-    PgWallet.update({ accounts: PgWallet.accounts });
+    const accounts = structuredClone(PgWallet.accounts);
+    accounts[index].name = name;
+    PgWallet.update({ accounts });
   }
 
   /**
@@ -329,12 +292,11 @@ class _PgWallet {
 
         try {
           const file = files[0];
-          const arrayBuffer = await file.arrayBuffer();
-          const decodedString = PgCommon.decodeBytes(arrayBuffer);
-          const keypairBytes = Uint8Array.from(JSON.parse(decodedString));
-          if (keypairBytes.length !== 64) throw new Error("Invalid keypair");
+          const text = await file.text();
+          const bytes = Uint8Array.from(JSON.parse(text));
+          if (bytes.length !== 64) throw new Error("Invalid keypair");
 
-          const keypair = PgWeb3.Keypair.fromSecretKey(keypairBytes);
+          const keypair = PgWeb3.Keypair.fromSecretKey(bytes);
           PgWallet.add({ name, keypair });
 
           return keypair;
@@ -379,10 +341,7 @@ class _PgWallet {
       throw new Error(`Account index '${index}' not found`);
     }
 
-    PgWallet.update({
-      state: "pg",
-      currentIndex: index,
-    });
+    PgWallet.update({ state: "pg", currentIndex: index });
   }
 
   /**
@@ -414,6 +373,17 @@ class _PgWallet {
     return PgWallet.standardWallets.filter(
       (w) => w.connected
     ) as StandardWallet<true>[];
+  }
+
+  /**
+   * Get all of the connected wallets (both playground and standard).
+   *
+   * @returns all connected wallets
+   */
+  static getConnectedWallets() {
+    return PgWallet.accounts
+      .map(PgWallet.create)
+      .concat(PgWallet.getConnectedStandardWallets());
   }
 
   /**

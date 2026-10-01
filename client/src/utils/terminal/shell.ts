@@ -50,9 +50,9 @@ export class PgShell {
     this._prefixes = prefixes;
   }
 
-  /** Terminal history */
-  get history() {
-    return this._history;
+  /** Active process count */
+  get processCount() {
+    return this._processCount;
   }
 
   /** Disable shell. */
@@ -62,10 +62,8 @@ export class PgShell {
 
   /** Enable shell. */
   enable() {
-    setTimeout(() => {
-      this._decrementProcessCount();
-      if (!this._processCount) this._prompt();
-    }, 10);
+    this._decrementProcessCount();
+    if (!this._processCount) this._prompt();
   }
 
   /** Get whether the shell is active, and the user can type. */
@@ -104,32 +102,31 @@ export class PgShell {
    * @param msg message to print to the terminal before prompting user
    * @returns user input
    */
-  async waitForUserInput(msg: string) {
-    return new Promise<string>((res, rej) => {
-      if (this._waitingForInput) rej("Already waiting for input.");
-      else {
-        this._tty.clearLine();
-        this._tty.println(
-          PgTerminal.secondary(this._prefixes.waitingInputMsg) + msg
-        );
-        this._waitingForInput = true;
-        this._prompt();
+  async waitForInput(msg: string) {
+    return new Promise<string>(async (res, rej) => {
+      if (this._waitingForInput) return rej("Already waiting for input.");
 
-        // This will happen once user sends the input
-        const handleInput = () => {
-          document.removeEventListener(
-            PgShell._TERMINAL_WAIT_FOR_INPUT,
-            handleInput
-          );
-          this._waitingForInput = false;
-          res(this._tty.input);
-        };
-
-        document.addEventListener(
+      // This will trigger once the user sends input
+      const handleInput = () => {
+        document.removeEventListener(
           PgShell._TERMINAL_WAIT_FOR_INPUT,
           handleInput
         );
-      }
+        this._waitingForInput = false;
+        res(this._tty.input);
+      };
+      document.addEventListener(PgShell._TERMINAL_WAIT_FOR_INPUT, handleInput);
+      this._waitingForInput = true;
+
+      this._tty.clearLine();
+      this._tty.println(
+        PgTerminal.secondary(this._prefixes.waitingInputMsg) + msg
+      );
+
+      // Sleep to fix an issue that makes the current line appear to start with
+      // a prompt token when it shouldn't
+      await PgCommon.sleep(0);
+      await this._prompt();
     });
   }
 
@@ -164,9 +161,7 @@ export class PgShell {
     if (!this.isPrompting() && data !== "\x03") return;
 
     if (this._tty.firstInit && this._activePrompt) {
-      const line = this._tty.buffer.getLine(
-        this._tty.buffer.cursorY + this._tty.buffer.baseY
-      );
+      const line = this._tty.getLine();
       if (!line) return;
 
       const promptRead = line.translateToString(
@@ -218,7 +213,8 @@ export class PgShell {
       this._history.push(input);
     } catch (e: any) {
       this._tty.println(e.message);
-      this._prompt();
+      await PgCommon.sleep(10);
+      await this._prompt();
     }
   }
 

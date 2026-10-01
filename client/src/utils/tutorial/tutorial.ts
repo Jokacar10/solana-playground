@@ -33,7 +33,7 @@ const storage = {
       return defaultState;
     }
 
-    return await PgExplorer.fs.readToJSONOrDefault(this.PATH, defaultState);
+    return await PgExplorer.fs.readToJsonOrDefault(this.PATH, defaultState);
   },
 
   /** Serialize the data and write to storage. */
@@ -87,20 +87,12 @@ const derive = () => ({
   current: createDerivable({
     derive: (path) => {
       const route = getTutorialsRoute();
-
-      try {
-        const { name } = PgRouter.getParamsFromPath(route.path, path);
-        return (
-          _PgTutorial.all.find((t) => {
-            return PgRouter.isPathsEqual(
-              PgCommon.toKebabFromTitle(t.name),
-              name
-            );
-          }) ?? null
-        );
-      } catch {
-        return null;
-      }
+      const { name } = PgRouter.getParamsFromPath(route.path, path);
+      return (
+        _PgTutorial.all.find((t) => {
+          return PgRouter.isPathsEqual(PgCommon.toKebabFromTitle(t.name), name);
+        }) ?? null
+      );
     },
     onChange: PgRouter.onDidChangePath,
   }),
@@ -109,14 +101,9 @@ const derive = () => ({
   page: createDerivable({
     derive: (path) => {
       const route = getTutorialsRoute();
-
-      try {
-        const { page } = PgRouter.getParamsFromPath(route.path, path);
-        if (PgCommon.isInt(page)) return parseInt(page);
-        return null;
-      } catch {
-        return null;
-      }
+      const { page } = PgRouter.getParamsFromPath(route.path, path);
+      if (PgCommon.isInt(page)) return parseInt(page);
+      return null;
     },
     onChange: PgRouter.onDidChangePath,
   }),
@@ -149,19 +136,6 @@ class _PgTutorial {
   }
 
   /**
-   * Get all tutorial names the user has started.
-   *
-   * @returns user tutorial names
-   */
-  static getUserTutorialNames() {
-    if (!PgExplorer.allWorkspaceNames) {
-      throw new Error("Explorer not initialized");
-    }
-
-    return PgExplorer.allWorkspaceNames.filter(this.isWorkspaceTutorial);
-  }
-
-  /**
    * Get whether the user has started the given tutorial.
    *
    * @param name tutorial name
@@ -182,7 +156,7 @@ class _PgTutorial {
    * @returns tutorial metadata
    */
   static async getMetadata(name: string) {
-    return await PgExplorer.fs.readToJSON<TutorialMetadata>(
+    return await PgExplorer.fs.readToJson<TutorialMetadata>(
       PgCommon.joinPaths(PgExplorer.PATHS.ROOT_DIR_PATH, name, storage.PATH)
     );
   }
@@ -211,6 +185,8 @@ class _PgTutorial {
 
   /** Open the about page of the current selected tutorial. */
   static async openAboutPage() {
+    if (!PgTutorial.current) throw new Error("Tutorial not selected");
+
     const tutorialPath = PgRouter.location.pathname
       .split("/")
       .slice(0, 3)
@@ -224,6 +200,8 @@ class _PgTutorial {
    * @param pageNumber page number to open
    */
   static async openPage(pageNumber: number) {
+    if (!PgTutorial.current) throw new Error("Tutorial not selected");
+
     const paths = PgRouter.location.pathname.split("/");
     const hasPage = paths.length === 4;
     const page = pageNumber.toString();
@@ -241,9 +219,9 @@ class _PgTutorial {
    * @param params tutorial start options
    */
   static async start(params: { files: TupleFiles; defaultOpenFile?: string }) {
-    const name = PgTutorial.current?.name;
-    if (!name) throw new Error("Tutorial is not selected");
+    if (!PgTutorial.current) throw new Error("Tutorial not selected");
 
+    const name = PgTutorial.current.name;
     let pageToOpen: number;
     if (!this.isStarted(name)) {
       // Initial tutorial setup
@@ -262,6 +240,8 @@ class _PgTutorial {
 
   /** Finish the current tutorial. */
   static async finish() {
+    if (!PgTutorial.current) throw new Error("Tutorial not selected");
+
     PgTutorial.completed = true;
     await this.openAboutPage();
   }
@@ -342,7 +322,7 @@ class _PgTutorial {
        * @returns the data as JSON
        */
       private async _readFile() {
-        return await PgExplorer.fs.readToJSONOrDefault(
+        return await PgExplorer.fs.readToJsonOrDefault(
           PgTutorialStorage._PATH,
           defaultValue
         );
@@ -361,9 +341,10 @@ class _PgTutorial {
       }
 
       /** Relative path to the tutorial storage JSON file */
-      // TODO: Use a constant for `.workspace` (same directory is used in the
-      // explorer)
-      private static _PATH = ".workspace/tutorial-storage.json";
+      private static _PATH = PgCommon.joinPaths(
+        PgExplorer.PATHS.WORKSPACE_DIRNAME,
+        "tutorial-storage.json"
+      );
     }
 
     return new PgTutorialStorage();

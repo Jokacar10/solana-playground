@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import styled, { css } from "styled-components";
 
 import Button from "../Button";
@@ -24,13 +24,13 @@ const Send = () => (
 
 const Wrapper = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.main.send.default)};
+    ${PgTheme.toCss(theme.components.wallet.main.send.default)};
   `}
 `;
 
 const Title = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.main.send.title)};
+    ${PgTheme.toCss(theme.components.wallet.main.send.title)};
   `}
 `;
 
@@ -61,43 +61,52 @@ const SendExpanded = () => {
         PgTerminal.info(`Sending ${amount} SOL to ${recipient}...`)
       );
 
-      let msg;
-      try {
-        const ix = PgWeb3.SystemProgram.transfer({
-          fromPubkey: PgWallet.current!.publicKey,
-          toPubkey: new PgWeb3.PublicKey(recipient),
-          lamports: PgCommon.solToLamports(parseFloat(amount)),
-        });
-        const tx = new PgWeb3.Transaction().add(ix);
-        const txHash = await PgTx.send(tx);
-        const txResult = await PgCommon.transition(PgTx.confirm(txHash));
-        if (txResult?.err) throw txResult.err;
+      const ix = PgWeb3.SystemProgram.transfer({
+        fromPubkey: PgWallet.current!.publicKey,
+        toPubkey: new PgWeb3.PublicKey(recipient),
+        lamports: PgWeb3.solToLamports(parseFloat(amount)),
+      });
+      const txHash = await PgTx.send(ix);
+      const txResult = await PgCommon.transition(PgTx.confirm(txHash));
+      if (txResult?.err) throw txResult.err;
 
-        msg = PgTerminal.success("Success.");
+      PgTerminal.println(PgTerminal.success("Success."));
 
-        // Reset inputs
-        setRecipient("");
-        setAmount("");
-      } catch (e: any) {
-        const convertedError = PgTerminal.convertErrorMessage(e.message);
-        msg = `Transfer error: ${convertedError}`;
-      } finally {
-        PgTerminal.println(msg + "\n");
-      }
+      // Reset inputs
+      setRecipient("");
+      setAmount("");
     });
   };
 
-  useKeybind("Enter", send);
+  const recipientInputRef = useRef<HTMLInputElement>(null);
+  const amountInputRef = useRef<HTMLInputElement>(null);
+  const sendButtonRef = useRef<HTMLButtonElement>(null);
+  useKeybind("Enter", {
+    handle: () => {
+      // Only send if one of the inputs is in focus
+      switch (document.activeElement) {
+        case recipientInputRef.current:
+        case amountInputRef.current:
+          // Click the button instead of calling `send` manually, as the latter
+          // does not handle button state (e.g. loading)
+          sendButtonRef.current?.click();
+      }
+    },
+    // Make `Enter` usable elsewhere (e.g. editor new line)
+    opts: { noPreventDefault: true },
+  });
 
   return (
     <ExpandedWrapper>
       <ExpandedInput
+        ref={recipientInputRef}
         value={recipient}
         onChange={(ev) => setRecipient(ev.target.value)}
         validator={PgCommon.isPk}
         placeholder="Recipient address"
       />
       <ExpandedInput
+        ref={amountInputRef}
         value={amount}
         onChange={(ev) => setAmount(ev.target.value)}
         validator={(input) => {
@@ -111,6 +120,7 @@ const SendExpanded = () => {
         placeholder="SOL amount"
       />
       <ExpandedButton
+        ref={sendButtonRef}
         onClick={send}
         disabled={disabled}
         loading={{ text: "Sending..." }}
@@ -125,21 +135,19 @@ const SendExpanded = () => {
 
 const ExpandedWrapper = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.main.send.expanded.default)};
+    ${PgTheme.toCss(theme.components.wallet.main.send.expanded.default)};
   `}
 `;
 
 const ExpandedInput = styled(Input)`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.main.send.expanded.input)};
+    ${PgTheme.toCss(theme.components.wallet.main.send.expanded.input)};
   `}
 `;
 
 const ExpandedButton = styled(Button)`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(
-      theme.components.wallet.main.send.expanded.sendButton
-    )};
+    ${PgTheme.toCss(theme.components.wallet.main.send.expanded.sendButton)};
   `}
 `;
 

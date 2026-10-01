@@ -165,7 +165,7 @@ export const processDeploy = async (rpcUrl: string | undefined) => {
         address: candyPubkey,
       });
     } catch {
-      throw new Error("Candy machine from cache does't exist on chain!");
+      throw new Error("Candy machine from cache doesn't exist on chain!");
     }
   }
 
@@ -198,10 +198,7 @@ export const processDeploy = async (rpcUrl: string | undefined) => {
       };
 
       // Periodically save the cache
-      const saveCacheIntervalId = setInterval(
-        () => cache.syncFile(false),
-        5000
-      );
+      const saveCacheIntervalId = setInterval(() => cache.syncFile(), 5000);
 
       // Show progress bar
       PgView.setMainSecondaryProgress(0.1);

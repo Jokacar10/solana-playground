@@ -7,17 +7,20 @@ import { useAsyncEffect } from "../../hooks";
 
 export const GlobalsProvider: FC = ({ children }) => {
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
 
   useAsyncEffect(async () => {
     setLoading(true);
 
     try {
-      const { dispose } = await initAll(GLOBALS);
-      setError("");
-      return dispose;
+      // Intentionally do not dispose globals because:
+      //
+      // - It makes app crashes irrecoverable, at least without state corruption or
+      //   unintended behavior (e.g. effects leakage).
+      // - It causes the app to crash in some cases after auto-refresh during
+      //   local development.
+      await initAll(GLOBALS);
     } catch (e: any) {
-      setError(
+      throw new Error(
         `Error during globals initialization: ${
           e.message ?? "Unexpected error"
         }`
@@ -28,6 +31,5 @@ export const GlobalsProvider: FC = ({ children }) => {
   }, []);
 
   if (loading) return <AppLoading />;
-  if (error) return <>{error}</>;
   return <>{children}</>;
 };

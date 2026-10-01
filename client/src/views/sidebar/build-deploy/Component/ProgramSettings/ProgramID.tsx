@@ -2,9 +2,6 @@ import { ChangeEvent, useEffect, useState } from "react";
 import styled, { css } from "styled-components";
 
 import Button from "../../../../../components/Button";
-import CopyButton from "../../../../../components/CopyButton";
-import ExportButton from "../../../../../components/ExportButton";
-import ImportButton from "../../../../../components/ImportButton";
 import Input from "../../../../../components/Input";
 import Modal from "../../../../../components/Modal";
 import Text from "../../../../../components/Text";
@@ -61,13 +58,13 @@ const NewKeypairModal = () => {
             The old keypair will be lost if you don't save it.
           </Text>
         </WarningTextWrapper>
-        <ExportButton
+        <Button.Export
           href={Array.from(PgProgramInfo.kp!.secretKey)}
           fileName="program-keypair.json"
           buttonKind="outline"
         >
           Save keypair
-        </ExportButton>
+        </Button.Export>
       </MainContent>
     </Modal>
   );
@@ -80,14 +77,13 @@ const Import = () => {
 
     try {
       const file = files[0];
-      const arrayBuffer = await file.arrayBuffer();
-      const decodedString = PgCommon.decodeBytes(arrayBuffer);
-      const buffer = Buffer.from(JSON.parse(decodedString));
-      if (buffer.length !== 64) throw new Error("Invalid keypair");
+      const text = await file.text();
+      const bytes = Uint8Array.from(JSON.parse(text));
+      if (bytes.length !== 64) throw new Error("Invalid keypair");
 
       // Override customPk when user imports a new keypair
       PgProgramInfo.update({
-        kp: PgWeb3.Keypair.fromSecretKey(buffer),
+        kp: PgWeb3.Keypair.fromSecretKey(bytes),
         customPk: null,
       });
 
@@ -99,64 +95,61 @@ const Import = () => {
   };
 
   return (
-    <ImportButton accept=".json" onImport={handleImport}>
+    <Button.Import accept=".json" onImport={handleImport}>
       Import
-    </ImportButton>
+    </Button.Import>
   );
 };
 
 const Export = () => {
   const kp = useRenderOnChange(PgProgramInfo.onDidChangeKp);
-  if (!kp) return null;
+  const customPk = useRenderOnChange(PgProgramInfo.onDidChangeCustomPk);
+  if (!kp || customPk) return null;
 
   return (
-    <ExportButton
+    <Button.Export
       href={Array.from(kp.secretKey)}
       fileName="program-keypair.json"
     >
       Export
-    </ExportButton>
+    </Button.Export>
   );
 };
 
 interface UpdateInfoProps {
   text?: string;
   error?: boolean;
+  changed?: boolean;
 }
 
 const InputPk = () => {
   const [val, setVal] = useState("");
   const [updateInfo, setUpdateInfo] = useState<UpdateInfoProps>({});
-  const [changed, setChanged] = useState(false);
 
   useEffect(() => {
     const { dispose } = PgProgramInfo.onDidChangePk((pk) => {
       if (pk) setVal(pk.toBase58());
     });
-
     return dispose;
   }, []);
 
   const handleChange = (ev: ChangeEvent<HTMLInputElement>) => {
     setVal(ev.target.value);
-    setChanged(true);
-    setUpdateInfo({});
+    setUpdateInfo({ changed: true });
   };
 
   const handleClick = () => {
     try {
       PgProgramInfo.update({ customPk: new PgWeb3.PublicKey(val) });
-
-      setUpdateInfo({ text: "Updated program id." });
-      setChanged(false);
+      setUpdateInfo({ text: "Updated program ID" });
     } catch {
-      setUpdateInfo({ text: "Invalid public key.", error: true });
+      setUpdateInfo({ text: "Invalid public key", error: true });
     }
   };
 
   const handleRemoveCustomProgramId = () => {
     PgProgramInfo.update({ customPk: null });
-    setUpdateInfo({ text: "Removed custom id." });
+    setUpdateInfo({ text: "Removed custom ID" });
   };
 
   return (
@@ -164,7 +157,7 @@ const InputPk = () => {
       <InputLabelWrapper>
         <InputLabel>Program ID:</InputLabel>
         {updateInfo.text && (
-          <UpdateInfo error={updateInfo?.error}>{updateInfo.text}</UpdateInfo>
+          <UpdateInfo error={updateInfo.error}>{updateInfo.text}</UpdateInfo>
         )}
       </InputLabelWrapper>
 
@@ -175,17 +168,19 @@ const InputPk = () => {
           validator={PgCommon.isPk}
           placeholder="Your program's public key"
         />
-        <CopyButton copyText={val} />
+        <Button.Copy copyText={val} />
       </InputWrapper>
       <InputWarning>
         <Warning color="warning" />
-        Note that you need to have this program's authority to upgrade
+        Only the authority can upgrade.
       </InputWarning>
-      {changed && <Button onClick={handleClick}>Change program id</Button>}
+      {updateInfo.changed && (
+        <Button onClick={handleClick}>Change program ID</Button>
+      )}
 
       {!!PgProgramInfo.customPk && (
         <Button onClick={handleRemoveCustomProgramId}>
-          Remove custom program id
+          Remove custom program ID
         </Button>
       )}
     </InputPkWrapper>
@@ -235,7 +230,6 @@ const WarningTextWrapper = styled.div`
   }
 `;
 
-// Program Id input
 const InputPkWrapper = styled.div`
   margin-top: 1rem;
 
@@ -272,7 +266,7 @@ const InputWrapper = styled.div`
 
 const InputWarning = styled.div`
   ${({ theme }) => css`
-    margin-top: 0.375rem;
+    margin-top: 0.5rem;
     font-size: ${theme.font.code.size.small};
     color: ${theme.colors.default.textSecondary};
 

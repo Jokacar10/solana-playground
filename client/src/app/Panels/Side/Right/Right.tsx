@@ -26,13 +26,14 @@ interface RightProps<W = number> extends DefaultRightProps {
   oldWidth: W;
 }
 
+const AUTOMATIC_MINIMIZE_WIDTH = PgCommon.toPx("12rem");
+
 const Right: FC<RightProps> = ({ page, width, setWidth, oldWidth }) => {
   const handleResizeStop = useCallback(
     (e, direction, ref, d) => {
       setWidth((w) => {
         const newWidth = w + d.width;
-        if (newWidth < 180) return 0;
-
+        if (newWidth < AUTOMATIC_MINIMIZE_WIDTH) return 0;
         return newWidth;
       });
     },
@@ -114,10 +115,10 @@ const Wrapper = styled.div<{
   ${({ theme, width, oldWidth }) => css`
     display: flex;
     flex-direction: column;
-    height: calc(100vh - ${PgTheme.theme.views.bottom.default.height});
+    height: calc(100vh - ${PgTheme.theme.views.bottom.height});
     min-width: ${width ? width : oldWidth}px;
 
-    ${PgTheme.convertToCSS(theme.views.sidebar.right.default)};
+    ${PgTheme.toCss(theme.views.sidebar.right.default)};
   `}
 `;
 
@@ -127,7 +128,7 @@ const TitleWrapper = styled.div`
     justify-content: center;
     align-items: center;
 
-    ${PgTheme.convertToCSS(theme.views.sidebar.right.title)};
+    ${PgTheme.toCss(theme.views.sidebar.right.title)};
   `}
 `;
 
@@ -136,8 +137,8 @@ const ContentWrapper = styled(FadeIn)`
     height: 100%;
     overflow-y: auto;
 
-    ${PgTheme.getScrollbarCSS()};
-    ${PgTheme.convertToCSS(theme.views.sidebar.right.content)};
+    ${PgTheme.getScrollbarCss()};
+    ${PgTheme.toCss(theme.views.sidebar.right.content)};
   `}
 `;
 

@@ -2,6 +2,7 @@ import type {
   AllPartial,
   Disposable,
   Promisable,
+  KeyOf,
   SyncOrAsync,
   Arrayable,
   ValueOf,
@@ -12,10 +13,29 @@ import type {
 export class PgCommon {
   /**
    * @param ms amount of time to sleep in ms
+   * @param abortController abort controller for cancelling
    * @returns a promise that will resolve after specified ms
    */
-  static async sleep(ms: number) {
-    return new Promise((res) => setTimeout(res, ms));
+  static async sleep(ms: number, abortController?: AbortController) {
+    return new Promise<void>((res, rej) => {
+      if (!abortController) return setTimeout(res, ms);
+
+      if (abortController.signal.aborted) {
+        return rej(new DOMException("Aborted", "AbortError"));
+      }
+
+      const id = setTimeout(() => {
+        abortController.signal.removeEventListener("abort", onAbort);
+        res();
+      }, ms);
+
+      const onAbort = () => {
+        clearTimeout(id);
+        rej(new DOMException("Aborted", "AbortError"));
+      };
+
+      abortController.signal.addEventListener("abort", onAbort, { once: true });
+    });
   }
 
   /**
@@ -138,7 +158,7 @@ export class PgCommon {
   }
 
   /**
-   * Execute the given callback in order.
+   * Execute the given callback sequentially i.e. in order.
    *
    * This is particularly useful when the desired behavior of an `onChange`
    * event is to execute its callback in order.
@@ -146,39 +166,28 @@ export class PgCommon {
    * @param cb callback to run
    * @returns the wrapped callback function
    */
-  static executeInOrder<T>(cb: (...args: [T]) => SyncOrAsync) {
+  static executeSequential(cb: (...args: unknown[]) => SyncOrAsync) {
     type Callback = typeof cb;
-    type CallbackWithArgs = [Callback, Parameters<Callback>];
 
-    const queue: CallbackWithArgs[] = [];
+    const queue: Parameters<Callback>[] = [];
     let isExecuting = false;
 
     const execute = async () => {
+      if (isExecuting) return;
+
       isExecuting = true;
 
-      while (queue.length !== 0) {
-        for (const index in queue) {
-          const [cb, args] = queue[index];
-          try {
-            await cb(...args);
-          } catch (e) {
-            throw e;
-          } finally {
-            queue.splice(+index, 1);
-          }
-        }
+      while (queue.length) {
+        const args = queue.shift()!;
+        await cb(...args);
       }
 
       isExecuting = false;
     };
 
-    const pushQueue = (item: CallbackWithArgs) => {
-      queue.push(item);
-      if (!isExecuting) execute();
-    };
-
     return async (...args: Parameters<Callback>) => {
-      pushQueue([cb, args]);
+      queue.push(args);
+      execute();
     };
   }
 
@@ -199,6 +208,42 @@ export class PgCommon {
   }
 
   /**
+   * Try calling the callback and return `undefined` on error.
+   *
+   * This is useful for avoiding nesting via `try-catch`. For example, this:
+   *
+   * ```ts
+   * let value;
+   * try {
+   *   value = getValue();
+   * } catch {
+   *   return;
+   * }
+   * ```
+   *
+   * can be written as:
+   *
+   * ```ts
+   * const value = PgCommon.tryCall(getValue);
+   * if (!value) return;
+   * ```
+   *
+   * This is better because it avoids nesting and leaving `value` mutable.
+   *
+   * @param cb callback to call
+   * @returns the return value of the callback or `undefined` on error
+   */
+  static tryCall<R>(
+    cb: (...args: unknown[]) => Exclude<R, undefined>
+  ): R | undefined {
+    try {
+      return cb();
+    } catch {
+      return;
+    }
+  }
+
+  /**
    * Fetch the response from the given URL and return the text response.
    *
    * @param url URL
@@ -215,36 +260,9 @@ export class PgCommon {
    * @param url URL
    * @returns the JSON response
    */
-  static async fetchJSON(url: string) {
+  static async fetchJson(url: string) {
     const response = await fetch(url);
     return await response.json();
-  }
-
-  /**
-   * @returns the decoded string
-   */
-  static decodeBytes(
-    b: ArrayBuffer | Buffer | Uint8Array,
-    type: string = "utf-8"
-  ) {
-    const decoder = new TextDecoder(type);
-    const decodedString = decoder.decode(b);
-
-    return decodedString;
-  }
-
-  /**
-   * @returns lamports amount to equivalent Sol
-   */
-  static lamportsToSol(lamports: number) {
-    return lamports / PgCommon._LAMPORTS_PER_SOL;
-  }
-
-  /**
-   * @returns Sol amount to equivalent lamports
-   */
-  static solToLamports(sol: number) {
-    return sol * PgCommon._LAMPORTS_PER_SOL;
   }
 
   /**
@@ -325,8 +343,9 @@ export class PgCommon {
   static setDefault<T, D extends AllPartial<T>>(value: T, defaultValue: D) {
     value ??= {} as T;
     for (const property in defaultValue) {
-      const result = defaultValue[property] as AllPartial<T[keyof T]>;
-      value[property as keyof T] ??= result as T[keyof T];
+      type K = KeyOf<T>;
+      const result = defaultValue[property] as AllPartial<T[K]>;
+      value[property as K] ??= result as T[K];
     }
 
     return value as NonNullable<T & D>;
@@ -415,7 +434,7 @@ export class PgCommon {
   }
 
   /**
-   * Access the property value from `.` seperated input.
+   * Access the property value from `.` separated input.
    *
    * @param obj object to get the property value of
    * @param accessor property accessor
@@ -460,7 +479,7 @@ export class PgCommon {
    * @returns the object keys as an array
    */
   static keys<T extends Record<string, unknown>>(obj: T) {
-    return Object.keys(obj) as Array<keyof T>;
+    return Object.keys(obj) as Array<KeyOf<T>>;
   }
 
   /**
@@ -470,7 +489,7 @@ export class PgCommon {
    * @returns the object entries as an array of [key, value] tuples
    */
   static entries<T extends Record<string, unknown>>(obj: T) {
-    return Object.entries(obj) as Array<[keyof T, ValueOf<T>]>;
+    return Object.entries(obj) as Array<[KeyOf<T>, ValueOf<T>]>;
   }
 
   /**
@@ -521,27 +540,91 @@ export class PgCommon {
   }
 
   /**
-   * Convert seconds into human readable string format
+   * Convert seconds into human readable string format.
+   *
+   * @param secs duration in seconds
+   * @param opts options:
+   * - `shorten`: shorten the output to show only the highest duration kind
+   * @returns a formatted human-readable time
    */
-  static secondsToTime(secs: number) {
-    const d = Math.floor(secs / (60 * 60 * 24)),
-      h = Math.floor((secs % (60 * 60 * 24)) / (60 * 60)),
-      m = Math.floor((secs % (60 * 60)) / 60),
-      s = Math.floor(secs % 60);
+  static formatSeconds(secs: number, opts?: { shorten?: boolean }) {
+    const durations = [
+      ["d", Math.floor(secs / (60 * 60 * 24))],
+      ["h", Math.floor((secs % (60 * 60 * 24)) / (60 * 60))],
+      ["m", Math.floor((secs % (60 * 60)) / 60)],
+      ["s", secs < 60 ? (secs % 60).toFixed(2) : Math.floor(secs % 60)],
+    ];
 
-    if (d) return `${d}d`;
-    if (h) return `${h}h`;
-    if (m) return `${m}m`;
-    if (s) return `${s}s`;
+    let parts = [];
+    for (const [abbr, dur] of durations) {
+      if (!dur) continue;
+      parts.push(`${dur}${abbr}`);
+      if (opts?.shorten) break;
+    }
 
-    return "";
+    return parts.join(" ") || "0s";
   }
 
   /**
-   * @returns the current UNIX timestamp(sec)
+   * @returns the current UNIX timestamp (in seconds)
    */
-  static getUnixTimstamp() {
+  static getUnixTimestamp() {
     return Math.floor(Date.now() / 1000);
+  }
+
+  /**
+   * Get human readable date time from unix timestamp
+   *
+   * @param unixTs unix timestamp in seconds
+   * @param opts date format options
+   * @returns formatted date string
+   */
+  static getFormattedDateFromUnixTimestamp(
+    unixTs: number,
+    opts?: {
+      locale: string;
+    } & Pick<Intl.DateTimeFormatOptions, "dateStyle" | "timeStyle" | "timeZone">
+  ) {
+    return new Intl.DateTimeFormat(opts?.locale ?? "en-US", {
+      dateStyle: opts?.dateStyle ?? "full",
+      timeStyle: opts?.timeStyle ?? "long",
+      timeZone: opts?.timeZone ?? "UTC",
+    }).format(unixTs * 1e3);
+  }
+
+  /**
+   * Get the previously saved value or create if it doesn't exist in cache.
+   *
+   * @param obj object to save the cache to
+   * @param key cache key
+   * @param getData callback to get the data
+   * @param duration cache invalidation duration
+   * @param force whether to force invalidate the cache
+   * @returns
+   */
+  static async getCachedValue<R>(
+    obj: any,
+    key: string,
+    getData: () => SyncOrAsync<R>,
+    duration: number,
+    force?: boolean
+  ) {
+    switch (typeof obj) {
+      case "object":
+      case "function": // Classes are functions
+        break;
+
+      default:
+        throw new Error(`Received non-object: ${obj}`);
+    }
+    if (typeof obj !== "object") key = "_cached" + PgCommon.toCamelCase(key);
+    const timestamp = PgCommon.getUnixTimestamp();
+
+    if (force || !obj[key] || timestamp > obj[key].timestamp + duration) {
+      obj[key] = { data: await getData(), timestamp };
+    }
+
+    return obj[key].data as R;
   }
 
   /**
@@ -570,7 +653,7 @@ export class PgCommon {
    *
    * @returns the operating system of the user
    */
-  static getOS() {
+  static getOs() {
     const userAgent = navigator.userAgent.toLowerCase();
     if (userAgent.includes("win")) return "Windows";
     if (userAgent.includes("mac")) return "MacOS";
@@ -583,10 +666,8 @@ export class PgCommon {
    * @param keybind keybind text
    * @returns the correct text based on OS
    */
-  static getKeybindTextOS(keybind: string) {
-    if (this.getOS() === "MacOS") {
-      keybind = keybind.replace("Ctrl", "Cmd");
-    }
+  static getKeybindTextOs(keybind: string) {
+    if (this.getOs() === "MacOS") keybind = keybind.replace("Ctrl", "Cmd");
     return keybind;
   }
 
@@ -599,6 +680,26 @@ export class PgCommon {
     if ((navigator as any).brave) return "Brave";
     if (navigator.userAgent.includes("Chrome")) return "Chrome";
     if (navigator.userAgent.includes("Firefox")) return "Firefox";
+  }
+
+  /**
+   * Convert the given CSS unit to pixels.
+   *
+   * @param unit CSS unit
+   * @returns the pixel value
+   */
+  static toPx(unit: string) {
+    const el = document.createElement("div");
+    el.style.width = unit;
+    el.style.zIndex = "-1";
+    el.style.opacity = "0";
+    el.style.pointerEvents = "none";
+
+    document.body.appendChild(el);
+    const px = el.getBoundingClientRect().width;
+    document.body.removeChild(el);
+
+    return px;
   }
 
   /**
@@ -627,8 +728,7 @@ export class PgCommon {
     if (!floatRegex.test(str)) return false;
 
     const float = parseFloat(str);
-    if (isNaN(float)) return false;
-    return true;
+    return !isNaN(float);
   }
 
   /**
@@ -640,13 +740,6 @@ export class PgCommon {
     if (!result) return false;
 
     return result[0] === str;
-  }
-
-  /**
-   * @returns whether the given string is parsable to a boolean
-   */
-  static isBoolean(str: string) {
-    return str === "true" || str === "false";
   }
 
   /**
@@ -1131,33 +1224,13 @@ export class PgCommon {
   }
 
   /**
-   * Convert objects into pretty JSON strings
+   * Convert objects into pretty JSON strings.
    *
-   * @param obj json object
+   * @param obj JSON object
    * @returns prettified string output
    */
-  static prettyJSON(obj: object) {
+  static toPrettyJson(obj: object) {
     return JSON.stringify(obj, null, 2);
-  }
-
-  /**
-   * Get human readable date time from unix timestamp
-   *
-   * @param unixTs unix timestamp in seconds
-   * @param opts date format options
-   * @returns formatted date string
-   */
-  static getFormattedDateFromUnixTimestamp(
-    unixTs: number,
-    opts?: {
-      locale: string;
-    } & Pick<Intl.DateTimeFormatOptions, "dateStyle" | "timeStyle" | "timeZone">
-  ) {
-    return new Intl.DateTimeFormat(opts?.locale ?? "en-US", {
-      dateStyle: opts?.dateStyle ?? "full",
-      timeStyle: opts?.timeStyle ?? "long",
-      timeZone: opts?.timeZone ?? "UTC",
-    }).format(unixTs * 1e3);
   }
 
   /**
@@ -1171,16 +1244,6 @@ export class PgCommon {
   }
 
   /**
-   * Get the string without '/' prefix
-   *
-   * @param str string input
-   * @returns the string without slash prefix
-   */
-  static withoutPreSlash(str: string) {
-    return str[0] === "/" ? str.substring(1) : str;
-  }
-
-  /**
    * Join the paths without caring about incorrect '/' inside paths.
    *
    * @param paths paths to join
@@ -1188,7 +1251,7 @@ export class PgCommon {
    */
   static joinPaths(...paths: string[]) {
     return paths.reduce(
-      (acc, cur) => this.appendSlash(acc) + this.withoutPreSlash(cur)
+      (acc, p) => this.appendSlash(acc) + (p[0] === "/" ? p.substring(1) : p)
     );
   }
 
@@ -1215,36 +1278,27 @@ export class PgCommon {
   }
 
   /**
-   * Adds space before the string, mainly used for terminal output
+   * Add space(s) before or after the string.
    *
-   * @param str string to prepend spaces to
+   * @param str string input
+   * @param amount the amount of space characters
    * @param opts -
-   * - addSpace: add space before or after the string
-   * - repeat: repeat the string `repeat.amount` times
-   * @returns the space prepended string
+   * - `type`: total or additional
+   * - `position`: from the left or the right
+   * @returns a new string with the space(s) added
    */
-  static string(
+  static addSpace(
     str: string,
-    opts: {
-      addSpace?: {
-        amount: number;
-        type?: "total" | "additional";
-        position?: "left" | "right";
-      };
-      repeat?: { amount: number };
+    amount: number,
+    opts?: {
+      type?: "total" | "additional";
+      position?: "left" | "right";
     }
   ) {
-    if (opts.addSpace) {
-      const space = this._repeatPattern(
-        " ",
-        opts.addSpace.amount -
-          (opts.addSpace.type === "additional" ? 0 : str.length)
-      );
-      return opts.addSpace.position === "right" ? str + space : space + str;
-    }
-    if (opts.repeat) {
-      return this._repeatPattern(str, opts.repeat.amount);
-    }
+    const space = " ".repeat(
+      amount - (opts?.type === "additional" ? 0 : str.length)
+    );
+    return opts?.position === "right" ? str + space : space + str;
   }
 
   /**
@@ -1272,24 +1326,5 @@ export class PgCommon {
    */
   static shorten(str: string, amount: number = 3) {
     return str.slice(0, amount) + "..." + str.slice(-amount);
-  }
-
-  /**
-   * Intentionally not using web3.js.LAMPORTS_PER_SOL to not increase main
-   * bundle size since `PgCommon` is getting loaded at the start of the app.
-   */
-  private static _LAMPORTS_PER_SOL = 1000000000;
-
-  /**
-   * Repeat a `pattern` `amount` times
-   *
-   * @param pattern pattern to repeat
-   * @param amount amount of times to repeat
-   * @returns the output
-   */
-  private static _repeatPattern(pattern: string, amount: number) {
-    return new Array(amount >= 0 ? amount : 0)
-      .fill(null)
-      .reduce((acc) => acc + pattern, "");
   }
 }

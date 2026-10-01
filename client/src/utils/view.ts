@@ -66,6 +66,7 @@ const derive = () => ({
   currentSidebarPage: createDerivable({
     derive: (n) => _PgView.allSidebarPages.find((p) => p.name === n) ?? null,
     onChange: "sidebar.name",
+    infallible: true,
   }),
 });
 
@@ -157,8 +158,7 @@ class _PgView {
 
   /** Get the minimum height of the main secondary view. */
   static getMainSecondaryMinHeight() {
-    // TODO: Make it dynamic?
-    return 36;
+    return PgCommon.toPx("2.25rem");
   }
 
   /** Get the maximum height of the main secondary view. */
@@ -299,7 +299,7 @@ class _PgView {
   }
 
   /**
-   * Normalize element i.e. convert components to elements and keep elemenets
+   * Normalize element i.e. convert components to elements and keep elements
    * the same.
    *
    * @param elementable element or component

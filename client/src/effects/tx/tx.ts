@@ -1,5 +1,5 @@
 import {
-  PgBytes,
+  PgCodec,
   PgConnection,
   PgSettings,
   PgTx,
@@ -17,21 +17,23 @@ export const tx = () => {
     // Don't show on playnet
     if (PgConnection.cluster === "playnet") return;
 
-    // Don't show buffer initialize and write transactions (too many)
-    const hasBufferInitOrWriteIx = tx.instructions.some(
+    // If a tx includes an BPF Upgradeable Loader program ix, only allow the
+    // final deploy/upgrade ixs to not spam
+    const hasNonFinalBpfLoaderIx = tx.instructions.some(
       (ix) =>
         ix.programId.equals(PgWeb3.BpfLoaderUpgradeableProgram.programId) &&
-        (PgWeb3.BpfLoaderUpgradeableProgram.isInitializeBufferInstruction(
-          ix.data
-        ) ||
-          PgWeb3.BpfLoaderUpgradeableProgram.isWriteInstruction(ix.data))
+        !(
+          PgWeb3.BpfLoaderUpgradeableProgram.isDeployWithMaxProgramLenInstruction(
+            ix.data
+          ) || PgWeb3.BpfLoaderUpgradeableProgram.isUpgradeInstruction(ix.data)
+        )
     );
-    if (hasBufferInitOrWriteIx) return;
+    if (hasNonFinalBpfLoaderIx) return;
 
     // Sanity check for signature
     if (!tx.signature) return;
-    const txHash = PgBytes.toBase58(tx.signature);
 
+    const txHash = PgCodec.encodeBinary(tx.signature, "base58");
     PgView.setToast(ExplorerLink, {
       componentProps: { txHash },
       options: { toastId: txHash },

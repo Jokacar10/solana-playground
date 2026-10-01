@@ -36,6 +36,7 @@ const derive = () => ({
       PgSettings.onDidChangeConnectionCommitment,
       PgPlaynet.onDidInit,
     ],
+    infallible: true,
   }),
 
   /** Whether there is a successful connection */
@@ -92,6 +93,7 @@ const derive = () => ({
         },
       };
     },
+    infallible: true,
   }),
 
   /** Current cluster name based on the current endpoint */
@@ -104,6 +106,7 @@ const derive = () => ({
   isClusterDown: createDerivable({
     derive: _PgConnection.getIsClusterDown,
     onChange: "cluster",
+    infallible: true,
   }),
 });
 

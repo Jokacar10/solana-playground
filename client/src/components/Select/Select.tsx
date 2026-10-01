@@ -1,6 +1,7 @@
 import ReactSelect, { GroupBase, Props } from "react-select";
 import styled, { css, useTheme } from "styled-components";
 
+import { Emoji } from "../../constants";
 import { PgTheme } from "../../utils";
 
 const Select = <
@@ -39,7 +40,7 @@ const Select = <
             ...mapTheme(select.option),
             ...stateStyle,
             "::before": {
-              content: `"${state.isSelected ? "✔" : ""}"`,
+              content: `"${state.isSelected ? Emoji.CHECKMARK : ""}"`,
               width: "0.5rem",
               height: "0.5rem",
               display: "flex",
@@ -80,12 +81,12 @@ const Select = <
 
 const StyledReactSelect = styled(ReactSelect)`
   ${({ theme }) => css`
-    ${PgTheme.getScrollbarCSS({
+    ${PgTheme.getScrollbarCss({
       allChildren: true,
       width: "0.25rem",
       height: "0.25rem",
     })};
-    ${PgTheme.convertToCSS(theme.components.select.default)};
+    ${PgTheme.toCss(theme.components.select.default)};
   `}
 `;
 

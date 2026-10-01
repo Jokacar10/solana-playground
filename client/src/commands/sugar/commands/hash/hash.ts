@@ -1,5 +1,5 @@
 import { loadCache, loadConfigData, saveConfigData } from "../../utils";
-import { PgBytes, PgCommon, PgTerminal } from "../../../../utils";
+import { PgCodec, PgCommon, PgTerminal } from "../../../../utils";
 
 export const processHash = async (compare: string | undefined) => {
   const configData = await loadConfigData();
@@ -7,7 +7,7 @@ export const processHash = async (compare: string | undefined) => {
 
   if (compare) {
     const cache = await loadCache();
-    const hashB58 = hash(PgCommon.prettyJSON(cache));
+    const hashB58 = hash(PgCommon.toPrettyJson(cache));
     term.println(`Cache hash: ${hashB58}`);
 
     if (compare !== hashB58) {
@@ -34,18 +34,18 @@ export const hashAndUpdate = async () => {
   }
 
   const cache = await loadCache();
-  const hashResult = hash(PgCommon.prettyJSON(cache));
+  const hashResult = hash(PgCommon.toPrettyJson(cache));
   hiddenSettings.hash = Array.from(Buffer.from(hashResult));
 
   await saveConfigData(configData);
 
-  return PgCommon.decodeBytes(Buffer.from(hiddenSettings.hash));
+  return PgCodec.decodeText(hiddenSettings.hash);
 };
 
 // FIXME: This ends up not producing the same hash with the sugar cli
 const hash = (data: string) => {
-  return PgBytes.toBase58(PgBytes.fromHex(PgBytes.hashSha256(data))).substring(
-    0,
-    32
-  );
+  return PgCodec.encodeBinary(
+    PgCodec.decodeBinary(PgCodec.hashSha256(data), "hex"),
+    "base58"
+  ).substring(0, 32);
 };

@@ -64,6 +64,13 @@ export class PgTheme {
    * @param fonts all fonts
    */
   static async create(themes: ImportableTheme[], fonts: Font[]) {
+    if (themes.filter((t) => t.isDefault).length !== 1) {
+      throw new Error("There must exactly be 1 default theme");
+    }
+    if (fonts.filter((f) => f.isDefault).length !== 1) {
+      throw new Error("There must exactly be 1 default font");
+    }
+
     this._themes = themes;
     this._fonts = fonts;
     await this.set();
@@ -95,21 +102,23 @@ export class PgTheme {
       fontFamily: Font["family"];
     }> = {}
   ) {
+    const defaultTheme = this.themes.find((t) => t.isDefault)!;
+    const defaultFont = this.fonts.find((f) => f.isDefault)!;
     const { themeName, fontFamily } = PgCommon.setDefault(params, {
-      themeName: localStorage.getItem(this._THEME_KEY) ?? this._themes[0].name,
-      fontFamily: localStorage.getItem(this._FONT_KEY) ?? this._fonts[0].family,
+      themeName: localStorage.getItem(this._THEME_KEY) ?? defaultTheme.name,
+      fontFamily: localStorage.getItem(this._FONT_KEY) ?? defaultFont.family,
     });
 
     // We might not be able to find the theme from `themeName` if one of the
-    // following occured:
+    // following occurred:
     //
     // - The theme name was updated/deleted
     // - The theme key was overridden by another app when running locally
     // - The user manually edited `localStorage` theme value
     const importableTheme =
-      this._themes.find((t) => t.name === themeName) ?? this._themes[0];
+      this._themes.find((t) => t.name === themeName) ?? defaultTheme;
     const font =
-      this._fonts.find((f) => f.family === fontFamily) ?? this.fonts[0];
+      this._fonts.find((f) => f.family === fontFamily) ?? defaultFont;
 
     // Check and return early if theme and font are already set
     const sameTheme = importableTheme.name === this._theme?.name;
@@ -123,6 +132,7 @@ export class PgTheme {
       ...structuredClone((await importableTheme.import()).default),
       name: importableTheme.name,
       isDark: importableTheme.isDark,
+      isDefault: importableTheme.isDefault,
     };
     this._font = font;
 
@@ -228,13 +238,13 @@ export class PgTheme {
    * @param component Component to convert to CSS
    * @returns the converted CSS
    */
-  static convertToCSS(component: DefaultComponent): string {
+  static toCss(component: DefaultComponent): string {
     return Object.keys(component).reduce((acc, key) => {
       const value = component[key];
 
       // Check for `&`
       if (key.startsWith("&")) {
-        return `${acc}${key}{${this.convertToCSS(value)}}`;
+        return `${acc}${key}{${this.toCss(value)}}`;
       }
 
       // Handle non-standard properties
@@ -248,11 +258,11 @@ export class PgTheme {
         case "active":
         case "focus":
         case "focusWithin":
-          return `${acc}&:${prop}{${this.convertToCSS(value)}}`;
+          return `${acc}&:${prop}{${this.toCss(value)}}`;
 
         case "before":
         case "after":
-          return `${acc}&::${prop}{${this.convertToCSS(value)}}`;
+          return `${acc}&::${prop}{${this.toCss(value)}}`;
       }
 
       // Only allow string and number values
@@ -327,7 +337,7 @@ export class PgTheme {
    * `allChildren`: Whether to add the scrollbar changes to all children components
    * @returns the scrollbar CSS
    */
-  static getScrollbarCSS(
+  static getScrollbarCss(
     opts?: {
       allChildren?: boolean;
     } & Pick<StandardProperties, "width" | "height" | "borderRadius">
@@ -382,7 +392,7 @@ export class PgTheme {
    * @param max maximum number of lines
    * @returns the CSS string
    */
-  static getClampLinesCSS(max: number) {
+  static getClampLinesCss(max: number) {
     return `
       display: -webkit-box;
       -webkit-line-clamp: ${max};
@@ -397,7 +407,7 @@ export class PgTheme {
    * @param theme ready theme
    * @returns the converted TextMate theme
    */
-  static convertToTextMateTheme(theme: Theme) {
+  static toTextMateTheme(theme: Theme) {
     const editorStyles = theme.components.editor;
     const hl = theme.highlight;
 
@@ -815,16 +825,15 @@ export class PgTheme {
     const theme = this._themeReady;
 
     // Default
-    bottom.default ??= {};
-    bottom.default.height ??= "1.5rem";
-    bottom.default.padding ??= "0 0.5rem";
-    bottom.default.bg ??= theme.colors.default.primary;
-    bottom.default.color ??= theme.colors.default.textPrimary;
-    bottom.default.fontSize ??= theme.font.code.size.small;
-    bottom.default.display ??= "flex";
-    bottom.default.flexWrap ??= "wrap";
-    bottom.default.alignItems ??= "center";
-    bottom.default.gap ??= "0 1rem";
+    bottom.height ??= "1.5rem";
+    bottom.padding ??= "0 0.5rem";
+    bottom.bg ??= theme.colors.default.primary;
+    bottom.color ??= theme.colors.default.textPrimary;
+    bottom.fontSize ??= theme.font.code.size.small;
+    bottom.display ??= "flex";
+    bottom.flexWrap ??= "wrap";
+    bottom.alignItems ??= "center";
+    bottom.gap ??= "0 1rem";
 
     return this;
   }

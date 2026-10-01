@@ -1,6 +1,6 @@
 import { PgCommon } from "../common";
 import { addInit, addOnDidChange, getChangePropName, PROPS } from "./common";
-import type { Disposable, SyncOrAsync } from "../types";
+import type { Disposable, KeyOf, SyncOrAsync } from "../types";
 
 /** Updatable decorator */
 export type Updatable<T> = {
@@ -12,7 +12,7 @@ export type Updatable<T> = {
 
 /** Recursive `onDidChange${propertyName}` method types */
 export type OnDidChangePropertyRecursive<T, U = FlattenObject<T>> = {
-  [K in keyof U as `${typeof PROPS.ON_DID_CHANGE}${Capitalize<K>}`]: (
+  [K in KeyOf<U> as `${typeof PROPS.ON_DID_CHANGE}${Capitalize<K>}`]: (
     cb: (value: U[K]) => void
   ) => Disposable;
 };
@@ -57,16 +57,16 @@ export function updatable<T extends Record<string, any>>(params: {
       await sClass[PROPS.REFRESH]();
 
       // Define getters and setters
-      for (const prop in sClass[PROPS.INTERNAL_STATE]) {
-        if (Object.hasOwn(sClass, prop)) continue;
-
-        Object.defineProperty(sClass, prop, {
-          get: () => sClass[PROPS.INTERNAL_STATE][prop],
-          set: (value: T[keyof T]) => {
-            sClass[PROPS.INTERNAL_STATE][prop] = value;
-            sClass[PROPS.DISPATCH_CHANGE_EVENT](prop);
-          },
-        });
+      for (const prop in params.defaultState) {
+        if (!Object.hasOwn(sClass, prop)) {
+          Object.defineProperty(sClass, prop, {
+            get: () => sClass[PROPS.INTERNAL_STATE][prop],
+            set: (value: T[keyof T]) => {
+              sClass[PROPS.INTERNAL_STATE][prop] = value;
+              sClass[PROPS.DISPATCH_CHANGE_EVENT](prop);
+            },
+          });
+        }
 
         if (params.recursive) recursivelyDefineSetters(sClass, [prop]);
       }
@@ -79,10 +79,15 @@ export function updatable<T extends Record<string, any>>(params: {
         all: typeof accessor[] = []
       ) => {
         const value = PgCommon.getValue(params.defaultState, accessor);
-        if (typeof value === "object" && value !== null) {
-          for (const key in value) getAllAccessors([...accessor, key], all);
-        } else if (accessor.length) {
+        if (
+          typeof value !== "object" ||
+          value === null ||
+          Array.isArray(value) ||
+          PgCommon.isEqual(value, {})
+        ) {
           all.push(accessor);
+        } else if (!accessor.length || params.recursive) {
+          for (const key in value) getAllAccessors([...accessor, key], all);
         }
 
         return all;
@@ -126,6 +131,10 @@ export function updatable<T extends Record<string, any>>(params: {
             return acc;
           }, {} as T);
 
+          // Do not save if it's the default state. This mitigates unintended
+          // resets during and after a full app crash.
+          if (updatableState === params.defaultState) return;
+
           params.storage!.write(updatableState);
         },
         getAllAccessors()
@@ -146,6 +155,9 @@ export function updatable<T extends Record<string, any>>(params: {
       // Migrate if needed
       const migrations = await params.migrate?.();
 
+      // Mutating `state` may have unintended side-effects, and we cannot use
+      // `structuredClone` because some values, such as self-referencing object
+      // and class instances, cannot be cloned properly.
       const state: T = params.storage
         ? await params.storage.read()
         : params.defaultState;
@@ -156,6 +168,7 @@ export function updatable<T extends Record<string, any>>(params: {
           let value;
           try {
             value = PgCommon.getValue(state, migration.from);
+            if (value === undefined) continue;
           } catch {
             // The value has already been migrated
             continue;
@@ -208,33 +221,33 @@ export function updatable<T extends Record<string, any>>(params: {
       };
       removeExtraProperties(state, params.defaultState);
 
-      // Set internal state fields individually to keep `derivable` fields
-      for (const [prop, value] of Object.entries(state)) {
-        sClass[PROPS.INTERNAL_STATE][prop] = value;
-      }
-
-      if (sClass[PROPS.IS_INITIALIZED]) {
-        // Dispatch change events by self-assigning the innermost values, which
-        // will also trigger the change events of its parent fields (change
-        // events bubble up).
-        //
-        // NOTE: This part assumes change events always bubble up. If we ever
-        // change it to bubble down (e.g. in `recursivelyDefineSetters`), we'd
-        // need to update this part too.
-        const selfAssignInnerFields = (state: any, accessor: string[] = []) => {
-          for (const [prop, value] of Object.entries(state)) {
-            if (
-              params.recursive &&
-              typeof value === "object" &&
-              value !== null
-            ) {
-              selfAssignInnerFields(value, [...accessor, prop]);
-            } else {
-              PgCommon.setValue(sClass, [...accessor, prop], value);
-            }
+      // Initialize or self-assign fields.
+      //
+      // If the field has already been initialized before, dispatch change
+      // events by self-assigning the innermost values, which will also trigger
+      // the change events of its parent fields (change events bubble up).
+      //
+      // NOTE: This part assumes change events always bubble up. If we ever
+      // change it to bubble down (e.g. in `recursivelyDefineSetters`), we'd
+      // need to update this part too.
+      const handleFields = (
+        classState: any,
+        state: any,
+        accessor: string[] = []
+      ) => {
+        for (const [prop, value] of Object.entries(state)) {
+          if (params.recursive && typeof value === "object" && value !== null) {
+            PgCommon.getValue(classState, accessor)[prop] ??= {};
+            handleFields(classState, value, [...accessor, prop]);
+          } else {
+            PgCommon.setValue(classState, [...accessor, prop], value);
           }
-        };
-        selfAssignInnerFields(state);
+        }
+      };
+      if (!sClass[PROPS.IS_INITIALIZED]) {
+        handleFields(sClass[PROPS.INTERNAL_STATE], state);
+      } else {
+        handleFields(sClass, state);
       }
     };
   };
@@ -242,17 +255,14 @@ export function updatable<T extends Record<string, any>>(params: {
 
 /** Define proxy setters for properties recursively. */
 const recursivelyDefineSetters = (sClass: any, accessor: string[]) => {
-  const internalValue = PgCommon.getValue(
-    sClass[PROPS.INTERNAL_STATE],
-    accessor
-  );
-  if (typeof internalValue !== "object" || internalValue === null) {
+  const value = PgCommon.getValue(sClass, accessor);
+  if (typeof value !== "object" || value === null) {
     // Self-assign to dispatch change events
-    PgCommon.setValue(sClass[PROPS.INTERNAL_STATE], accessor, internalValue);
+    PgCommon.setValue(sClass, accessor, value);
     return;
   }
 
-  const proxy = new Proxy(internalValue, {
+  const proxy = new Proxy(value, {
     set(target: any, prop: string, value: any) {
       target[prop] = value;
 
@@ -349,7 +359,9 @@ type JoinCapitalized<T extends string[]> = T extends [
 
 /** Map the property values to a union of tuples */
 type PropertiesToUnionOfTuples<T, Acc extends string[] = []> = {
-  [K in keyof T]: T[K] extends object
-    ? [[...Acc, K], T[K]] | PropertiesToUnionOfTuples<T[K], [...Acc, K]>
-    : [[...Acc, K], T[K]];
+  [K in keyof T]: K extends KeyOf<T>
+    ? T[K] extends object
+      ? [[...Acc, K], T[K]] | PropertiesToUnionOfTuples<T[K], [...Acc, K]>
+      : [[...Acc, K], T[K]]
+    : never;
 }[keyof T];

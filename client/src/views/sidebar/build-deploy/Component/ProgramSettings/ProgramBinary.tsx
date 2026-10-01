@@ -1,7 +1,6 @@
 import styled from "styled-components";
 
 import Button from "../../../../../components/Button";
-import ImportButton from "../../../../../components/ImportButton";
 import {
   PgCommon,
   PgExplorer,
@@ -23,7 +22,7 @@ const Wrapper = styled.div`
 `;
 
 const Import = () => (
-  <ImportButton
+  <Button.Import
     accept=".so"
     onImport={async (ev) => {
       const files = ev.target.files;
@@ -36,9 +35,8 @@ const Import = () => (
         const file = files[0];
         const fileName = file.name;
         const arrayBuffer = await file.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        PgProgramInfo.update({ importedProgram: { buffer, fileName } });
+        const bytes = new Uint8Array(arrayBuffer);
+        PgProgramInfo.update({ importedProgram: { bytes, fileName } });
       } catch (err: any) {
         console.log(err.message);
       }
@@ -46,7 +44,7 @@ const Import = () => (
     showImportText
   >
     Import
-  </ImportButton>
+  </Button.Import>
 );
 
 const Export = () => {

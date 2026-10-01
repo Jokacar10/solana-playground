@@ -5,7 +5,12 @@ import {
   generateValue,
   generateProgramAddressFromSeeds,
 } from "./generator";
-import { getPrograms, getOrInitPythAccounts } from "./generators";
+import {
+  getMintAccounts,
+  getOrInitPythAccounts,
+  getPrograms,
+  getTokenAccounts,
+} from "./generators";
 import { getIdlType, IdlInstruction } from "./idl-types";
 import { createGeneratableInstruction, fillRandom } from "./instruction";
 import { getAnchorProgram } from "./program";
@@ -70,17 +75,16 @@ export class PgProgramInteraction {
         if (acc.generator.type !== "All wallets") return null;
 
         const generatorName = acc.generator.name;
-        const walletAccount = PgWallet.accounts.find(
-          ({ name }) => name === generatorName
-        )!;
-        return PgWallet.create(walletAccount);
+        return PgWallet.getConnectedWallets().find(
+          (wallet) => wallet.name === generatorName
+        );
       })
       .filter(PgCommon.isNonNullish);
 
-    const tx = await program.methods[ix.name](...args)
+    const pIx = await program.methods[ix.name](...args)
       .accounts(accounts)
-      .transaction();
-    const txHash = await PgTx.send(tx, { keypairSigners, walletSigners });
+      .instruction();
+    const txHash = await PgTx.send(pIx, { keypairSigners, walletSigners });
     return txHash;
   }
 
@@ -107,6 +111,12 @@ export class PgProgramInteraction {
 
   /** {@link fetchAllAccounts} */
   static fetchAllAccounts = fetchAllAccounts;
+
+  /** {@link getTokenAccounts} */
+  static getTokenAccounts = getTokenAccounts;
+
+  /** {@link getMintAccounts} */
+  static getMintAccounts = getMintAccounts;
 
   /** {@link getOrInitPythAccounts} */
   static getOrInitPythAccounts = getOrInitPythAccounts;

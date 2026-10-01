@@ -6,12 +6,6 @@ import { PgAutocomplete } from "./autocomplete";
 import { PgHistory } from "./history";
 import { PgShell } from "./shell";
 import { PgTty } from "./tty";
-import {
-  OTHER_ERROR,
-  PROGRAM_ERROR,
-  RPC_ERROR,
-  SERVER_ERROR,
-} from "../../constants";
 import { PgCommon } from "../common";
 import type { CommandManager, Prefixes, PrintOptions } from "./types";
 import type { Methods, ClassReturnType, SyncOrAsync } from "../types";
@@ -62,76 +56,6 @@ export class PgTerminal {
     return `\x1b[4m${text}\x1b[0m`;
   }
 
-  /**
-   * Make error messages more friendly
-   */
-  static convertErrorMessage(msg: string) {
-    // Hex program errors
-    for (const programErrorCode in PROGRAM_ERROR) {
-      if (msg.endsWith("0x" + programErrorCode.toLowerCase())) {
-        const parts = msg.split(":");
-
-        let ixIndex = parts[2][parts[2].length - 1];
-        if (!PgCommon.isInt(ixIndex)) ixIndex = "0";
-        const programError = PROGRAM_ERROR[programErrorCode];
-
-        msg = `\n${this.bold("Instruction index:")} ${ixIndex}\n${this.bold(
-          "Reason:"
-        )} ${programError}`;
-
-        return msg;
-      }
-    }
-
-    // Descriptive program errors
-    if (msg.startsWith("failed to send")) {
-      const parts = msg.split(":");
-      // With ix index
-      if (parts.length === 4) {
-        const ixIndex = parts[2][parts[2].length - 1];
-        const programError = parts[3][1].toUpperCase() + parts[3].substring(2);
-
-        msg = `\n${this.bold("Instruction index:")} ${ixIndex}\n${this.bold(
-          "Reason:"
-        )} ${programError}.`;
-
-        return msg;
-      }
-
-      // Without ix index
-      const programError = parts[2][1].toUpperCase() + parts[2].substring(2);
-      msg = `\n${this.bold("Reason:")} ${programError}.`;
-
-      return msg;
-    }
-
-    // Rpc errors
-    for (const rpcError in RPC_ERROR) {
-      if (msg.includes(rpcError)) {
-        msg = RPC_ERROR[rpcError];
-        return msg;
-      }
-    }
-
-    // Server errors
-    for (const serverError in SERVER_ERROR) {
-      if (msg === serverError) {
-        msg = SERVER_ERROR[serverError];
-        return msg;
-      }
-    }
-
-    // Other errors
-    for (const otherError in OTHER_ERROR) {
-      if (msg === otherError) {
-        msg = OTHER_ERROR[otherError];
-        return msg;
-      }
-    }
-
-    return msg;
-  }
-
   /** Get whether the terminal is focused or in blur. */
   static isFocused() {
     return document
@@ -142,11 +66,6 @@ export class PgTerminal {
   /** Dispatch enable terminal custom event. */
   static async enable() {
     await PgTerminal.run({ enable: [] });
-  }
-
-  /** Dispatch disable terminal custom event. */
-  static async disable() {
-    await PgTerminal.run({ disable: [] });
   }
 
   /** Log terminal messages from anywhere. */
@@ -174,33 +93,10 @@ export class PgTerminal {
     this.println(msg);
   }
 
-  /** Dispatch scroll to bottom custom event. */
-  static async scrollToBottom() {
-    await PgTerminal.run({ scrollToBottom: [] });
-  }
-
-  /** Execute the given command from string. */
-  static async executeFromStr(...args: Parameters<PgTerm["executeFromStr"]>) {
-    const term = await PgTerminal.get();
-    return await term.executeFromStr(...args);
-  }
-
-  /**
-   * Wrapper function for commands that interact with the terminal
-   *
-   * This function should be used as a wrapper function when calling any
-   * terminal command.
-   */
+  /** {@link PgTerm.process} */
   static async process<T>(cb: () => SyncOrAsync<T>) {
-    this.disable();
-    this.scrollToBottom();
-    try {
-      return await cb();
-    } catch (e: any) {
-      this.println(`Process error: ${e?.message ? e.message : e}`);
-    } finally {
-      this.enable();
-    }
+    const term = await PgTerminal.get();
+    return await term.process<T>(cb);
   }
 
   /**
@@ -234,6 +130,7 @@ export class PgTerminal {
    * Format the given list for terminal view.
    *
    * @param list list to format
+   * @param opts format options
    * @returns the formatted list
    */
   static formatList(
@@ -242,21 +139,22 @@ export class PgTerminal {
   ) {
     const { align } = PgCommon.setDefault(opts, { align: "x" });
     return list
-      .map((item) =>
-        Array.isArray(item) ? item : [item.name, item.description ?? ""]
-      )
+      .map((item) => {
+        if (Array.isArray(item)) return item;
+        return Object.values(item).filter((v) => typeof v === "string");
+      })
       .sort((a, b) => {
         const allowedRegex = /^[a-zA-Z-]+$/;
         if (!allowedRegex.test(a[0])) return 1;
         if (!allowedRegex.test(b[0])) return -1;
         return a[0].localeCompare(b[0]);
       })
-      .reduce((acc, items) => {
-        const output = items.reduce((acc, col, i) => {
+      .reduce((acc, items, _i, list) => {
+        const output = items.reduce((acc, item, i) => {
           const MAX_CHARS = 80;
 
           const chunks: string[][] = [];
-          const words = col.split(" ");
+          const words = item.split(" ");
           let j = 0;
           for (let i = 0; i < words.length; i++) {
             while (
@@ -270,17 +168,32 @@ export class PgTerminal {
           }
 
           if (align === "x") {
-            const WHITESPACE_LEN = 24;
+            if (!i) {
+              return (
+                acc +
+                chunks.reduce(
+                  (acc, chunk, i) => acc + (i ? "\n\t" : "") + chunk.join(" "),
+                  ""
+                )
+              );
+            }
+
+            const DEFAULT_WHITESPACE_LEN = 24;
+            const longestPreviousRowLen = Math.max(
+              ...list.map((items) => items[i - 1].length)
+            );
+            const previousRowLen = items[i - 1].length;
+            const missingWhitespace = longestPreviousRowLen - previousRowLen;
+            const whitespaceLen = DEFAULT_WHITESPACE_LEN + missingWhitespace;
+            const whitespace = " ".repeat(whitespaceLen);
+            const nextIndent = "\n\t" + " ".repeat(previousRowLen) + whitespace;
             return (
               acc +
+              whitespace +
               chunks.reduce(
-                (acc, row, i) =>
-                  acc +
-                  (i ? "\n\t" + " ".repeat(WHITESPACE_LEN) : "") +
-                  row.join(" "),
+                (acc, col, i) => acc + (i ? nextIndent : "") + col.join(" "),
                 ""
-              ) +
-              " ".repeat(Math.max(WHITESPACE_LEN - col.length, 0))
+              )
             );
           }
 
@@ -354,10 +267,14 @@ export class PgTerm {
     // formatted input.
     //
     // Also stops multiline inputs rendering unnecessarily.
-    this._xterm.onResize(({ rows, cols }) => {
-      this._tty.clearInput();
+    this._xterm.onResize(({ cols, rows }) => {
+      // If it's not prompting, clearing and setting the input may print the
+      // previous line without the prompt prefix, resulting in an undesired
+      // duplication that cannot be cleared (without clearing everything)
+      const isPrompting = this._shell.isPrompting();
+      if (isPrompting) this._tty.clearInput();
       this._tty.setTermSize(cols, rows);
-      this._tty.setInput(this._tty.input, true);
+      if (isPrompting) this._tty.setInput(this._tty.input, true);
     });
 
     // Add a custom key handler in order to fix a bug with spaces
@@ -489,26 +406,24 @@ export class PgTerm {
    * @param msg message to print to the terminal before prompting user
    * @param opts -
    * - allowEmpty: whether to allow the input to be empty
-   * - choice.items: set of values to choose from. Returns the selected index if
-   * `allowMultiple` is not specified.
-   * - choice.allowMultiple: whether to allow multiple choices. Returns the indices.
-   * - confirm: yes/no question. Returns the result as boolean.
    * - default: default value to set
+   * - choice.items: set of values to choose from. Returns the selected value if
+   * `multiple` is not specified.
+   * - choice.multiple: whether to allow multiple choices. Returns the values.
+   * - confirm: yes/no question. Returns the result as a boolean.
    * - validator: callback function to validate the user input
    * @returns user input
    */
-  async waitForUserInput<
+  async waitForInput<
     O extends {
       allowEmpty?: boolean;
-      confirm?: boolean;
       default?: string;
+      confirm?: boolean;
       choice?: {
         items: string[];
-        allowMultiple?: boolean;
+        multiple?: boolean;
       };
-      validator?: (
-        userInput: string
-      ) => boolean | void | Promise<boolean | void>;
+      validator?: (input: string) => SyncOrAsync<boolean | void>;
     }
   >(
     msg: string,
@@ -517,17 +432,22 @@ export class PgTerm {
     O["confirm"] extends boolean
       ? boolean
       : O["choice"] extends object
-      ? O["choice"]["allowMultiple"] extends boolean
-        ? number[]
-        : number
+      ? O["choice"]["multiple"] extends boolean
+        ? O["choice"]["items"]
+        : O["choice"]["items"][number]
       : string
   > {
-    this.focus();
+    // Avoid `this.focus()` here because it calls `scrollToCursor`, which may
+    // desync the DOM scroll from `xterm`'s state and leave the next render at
+    // the wrong position.
+    this._xterm.focus();
+    this.scrollToBottom();
 
     let convertedMsg = msg;
     const disposables = [];
     if (opts?.choice) {
       // Show multi choice items
+      convertedMsg += " (options: ',' separated numbers e.g. 0,1)";
       const items = opts.choice.items;
       convertedMsg += items.reduce(
         (acc, cur, i) => acc + `\n[${i}] - ${cur}`,
@@ -556,7 +476,7 @@ export class PgTerm {
 
     let userInput;
     try {
-      userInput = await this._shell.waitForUserInput(convertedMsg);
+      userInput = await this._shell.waitForInput(convertedMsg);
     } finally {
       disposables.reverse().forEach(({ dispose }) => dispose());
     }
@@ -577,7 +497,7 @@ export class PgTerm {
         opts.validator = (input) => {
           const parsed: number[] = JSON.parse(`[${input}]`);
           return (
-            (opts.choice?.allowMultiple ? true : parsed.length === 1) &&
+            (opts.choice?.multiple ? true : parsed.length === 1) &&
             parsed.every(
               (v) =>
                 PgCommon.isInt(v.toString()) && v >= 0 && v <= choiceMaxLength
@@ -590,7 +510,7 @@ export class PgTerm {
     // Allow empty
     if (!userInput && !opts?.allowEmpty) {
       this.println(PgTerminal.error("Can't be empty.\n"));
-      return await this.waitForUserInput(msg, opts);
+      return await this.waitForInput(msg, opts);
     }
 
     // Validator
@@ -600,18 +520,18 @@ export class PgTerm {
           this.println(
             PgTerminal.error(`'${userInput}' is not a valid value.\n`)
           );
-          return await this.waitForUserInput(msg, opts);
+          return await this.waitForInput(msg, opts);
         }
       } catch (e: any) {
         this.println(
           PgTerminal.error(`${e.message || `Validation failed: ${e}`}\n`)
         );
-        return await this.waitForUserInput(msg, opts);
+        return await this.waitForInput(msg, opts);
       }
     }
 
     // Return value
-    let returnValue;
+    let returnValue: any;
 
     // Confirm
     if (opts?.confirm) {
@@ -619,10 +539,16 @@ export class PgTerm {
     }
     // Multichoice
     else if (opts?.choice) {
-      if (opts.choice.allowMultiple) {
-        returnValue = JSON.parse(`[${userInput}]`);
+      const { items, multiple } = opts.choice;
+      // TODO: Return the actual values instead of indices
+      if (multiple) {
+        returnValue = userInput
+          .split(",")
+          .map((s) => s.trim())
+          .map(parseInt)
+          .map((i) => items[i]);
       } else {
-        returnValue = parseInt(userInput);
+        returnValue = items[parseInt(userInput)];
       }
     }
     // Default as string
@@ -635,7 +561,10 @@ export class PgTerm {
         ? PgTerminal.secondaryText("empty")
         : PgTerminal.success(userInput);
 
-    this._tty.changeLine(this._prefixes.waitingInputPrompt + visibleText);
+    // Change the line
+    this._tty.clearLine(1);
+    this._tty.println(this._prefixes.waitingInputPrompt + visibleText);
+
     return returnValue;
   }
 
@@ -648,6 +577,37 @@ export class PgTerm {
   async executeFromStr(cmd: string, clearCmd?: boolean) {
     this._tty.setInput(cmd);
     return await this._shell.handleReadComplete(clearCmd);
+  }
+
+  /**
+   * Process the given callback.
+   *
+   * The terminal will be disabled for the duration of the callback.
+   *
+   * @param cb callback to process
+   * @throws if the callback throws (while also printing the error)
+   * @returns the process result
+   */
+  async process<T>(cb: () => SyncOrAsync<T>) {
+    this.disable();
+    this.scrollToBottom();
+    try {
+      return await cb();
+    } catch (e: any) {
+      // Only log error if this is the outermost process i.e. a process that is
+      // *not* spawned by another terminal process.
+      //
+      // NOTE: This check is not fully correct because, at the time of writing
+      // this comment, one terminal can have multiple outermost processes at
+      // the same time.
+      if (this._shell.processCount === 1) {
+        this.println(`Process error: ${e?.message ? e.message : e}`);
+      }
+
+      throw e;
+    } finally {
+      this.enable();
+    }
   }
 
   /**

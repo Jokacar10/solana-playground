@@ -1,4 +1,5 @@
 import { PgCommon } from "./common";
+import { PgCompression } from "./compression";
 import { PgExplorer, TupleFiles } from "./explorer";
 import type { RequiredKey, SyncOrAsync } from "./types";
 
@@ -7,11 +8,27 @@ export type FrameworkParam<N extends string> = {
   /** Framework name */
   name: N;
 
+  /** Framework description */
+  description: string;
+
   /** Framework program language */
   language: LanguageName;
 
   /** Image icon src, defaults to `/frameworks/icon.png` */
   icon?: string;
+
+  /** Whether to make the image circular */
+  circleImage?: boolean;
+
+  /** Framework documentation */
+  docs?: {
+    /** Framework documentation URL */
+    url: string;
+    /** Framework documentation name, defaults to the framework `name` */
+    name?: string;
+    /** Framework documentation description, defaults to the framework `description` */
+    description?: string;
+  };
 
   /** Example GitHub project */
   githubExample: {
@@ -23,9 +40,6 @@ export type FrameworkParam<N extends string> = {
 
   /** Default file to open after loading the default framework files */
   defaultOpenFile?: string;
-
-  /** Whether to make the image circular */
-  circleImage?: boolean;
 
   /**
    * Get whether the given files have this framework's layout.
@@ -70,7 +84,7 @@ export type FrameworkParam<N extends string> = {
 /** Created framework */
 export type Framework<N extends string = string> = RequiredKey<
   FrameworkParam<N>,
-  "getIsCurrent" | "getDefaultFiles" | "import" | "export"
+  "icon" | "getIsCurrent" | "getDefaultFiles" | "import" | "export"
 >;
 
 export class PgFramework {
@@ -106,7 +120,7 @@ export class PgFramework {
    * @param files framework files
    * @returns the playground layout converted files
    */
-  static async convertToPlaygroundLayout(files: TupleFiles) {
+  static async toPlaygroundLayout(files: TupleFiles) {
     const framework = await this.getFromFiles(files);
     if (!framework) throw new Error("Could not identify framework");
 
@@ -128,6 +142,8 @@ export class PgFramework {
   static async exportWorkspace<C extends boolean = false>(opts?: {
     convert?: C;
   }) {
+    const workspacePath = PgExplorer.getRequiredCurrentWorkspacePath();
+
     let files: TupleFiles = [];
     const recursivelyGetItems = async (path: string) => {
       const itemNames = await PgExplorer.fs.readDir(path);
@@ -138,7 +154,7 @@ export class PgFramework {
       for (const subItemPath of subItemPaths) {
         const metadata = await PgExplorer.fs.getMetadata(subItemPath);
         if (metadata.isFile()) {
-          const relativePath = PgExplorer.getRelativePath(subItemPath);
+          const relativePath = PgExplorer.toRelativePath(subItemPath);
           const content = await PgExplorer.fs.readToString(subItemPath);
           files.push([relativePath, content]);
         } else {
@@ -146,7 +162,7 @@ export class PgFramework {
         }
       }
     };
-    await recursivelyGetItems(PgExplorer.currentWorkspacePath);
+    await recursivelyGetItems(workspacePath);
 
     // Convert from playground layout to framework layout
     let readme: string | undefined;
@@ -160,14 +176,7 @@ export class PgFramework {
     }
 
     // Compress Zip
-    const { default: JSZip } = await import("jszip");
-    const zip = new JSZip();
-    files.forEach(([path, content]) => {
-      const isFile = PgExplorer.getItemTypeFromName(path).file;
-      if (isFile) zip.file(path, content);
-      else zip.folder(path);
-    });
-    const blob = await zip.generateAsync({ type: "blob" });
+    const blob = await PgCompression.createZip(files);
     PgCommon.export(PgExplorer.currentWorkspaceName + ".zip", blob);
 
     return { readme } as { readme: C extends true ? string : undefined };

@@ -25,14 +25,14 @@ export const processCreateConfig = async () => {
 
   // Size
   configData.size = parseInt(
-    await term.waitForUserInput(
+    await term.waitForInput(
       "How many NFTs will you have in your candy machine?",
       { validator: PgCommon.isInt }
     )
   );
 
   // Symbol
-  configData.symbol = await term.waitForUserInput(
+  configData.symbol = await term.waitForInput(
     "What is the symbol of your collection? Hit [ENTER] for no symbol.",
     {
       allowEmpty: true,
@@ -46,7 +46,7 @@ export const processCreateConfig = async () => {
 
   // Royalties(seller fee basis points)
   configData.royalties = parseInt(
-    await term.waitForUserInput("What is the seller fee basis points?", {
+    await term.waitForInput("What is the seller fee basis points?", {
       validator: (input) => {
         if (!PgCommon.isInt(input)) {
           throw new Error(`Couldn't parse input of '${input}' to a number.`);
@@ -59,14 +59,14 @@ export const processCreateConfig = async () => {
   );
 
   // Sequential
-  configData.isSequential = await term.waitForUserInput(
+  configData.isSequential = await term.waitForInput(
     "Do you want to use a sequential mint index generation? We recommend you choose no.",
     { confirm: true, default: "no" }
   );
 
   // Creators
   const numberOfCreators = parseInt(
-    await term.waitForUserInput(
+    await term.waitForInput(
       "How many creator wallets do you have? (max limit of 4)",
       { validator: (input) => PgCommon.isInt(input) && parseInt(input) <= 4 }
     )
@@ -89,14 +89,14 @@ export const processCreateConfig = async () => {
 
   configData.creators = [];
   for (let i = 0; i < numberOfCreators; i++) {
-    const address = await term.waitForUserInput(
+    const address = await term.waitForInput(
       `Enter creator wallet address #${i + 1}`,
       {
         validator: PgCommon.isPk,
       }
     );
     const share = parseInt(
-      await term.waitForUserInput(
+      await term.waitForInput(
         `Enter royalty percentage share for creator #${
           i + 1
         } (e.g., 70). Total shares must add to 100.`,
@@ -112,22 +112,20 @@ export const processCreateConfig = async () => {
   }
 
   // Optional extra features
-  const choices = await term.waitForUserInput(
+  const ITEMS = {
+    HIDDEN_SETTINGS: "Hidden Settings",
+  };
+  const choices = await term.waitForInput(
     "Which extra features do you want to use? Leave empty for no extra features.",
     {
       allowEmpty: true,
-      choice: {
-        items: [
-          "Hidden Settings", // 0
-        ],
-        allowMultiple: true,
-      },
+      choice: { items: [ITEMS.HIDDEN_SETTINGS], multiple: true },
     }
   );
 
   // Hidden Settings
-  if (choices.includes(0)) {
-    let name = await term.waitForUserInput(
+  if (choices.includes(ITEMS.HIDDEN_SETTINGS)) {
+    let name = await term.waitForInput(
       [
         "What is the prefix name for your hidden settings mints? The mint index will be appended at the end of the name.",
         PgTerminal.secondaryText(
@@ -153,7 +151,7 @@ export const processCreateConfig = async () => {
       name += ` #${REPLACEMENT_INDEX_INCREMENT}`;
     }
 
-    const uri = await term.waitForUserInput(
+    const uri = await term.waitForInput(
       "What is URI to be used for each mint?",
       {
         validator: (input) => {
@@ -177,7 +175,7 @@ export const processCreateConfig = async () => {
   // Upload method
   configData.uploadConfig = {
     // TODO:
-    // method: await term.waitForUserInput(
+    // method: await term.waitForInput(
     //   `"What upload method do you want to use?"`,
     //   {
     //     choice: {
@@ -208,18 +206,15 @@ export const processCreateConfig = async () => {
 
     // AWS
     case UploadMethod.AWS: {
-      const bucket = await term.waitForUserInput(
-        "What is the AWS S3 bucket name?"
-      );
-      const profile = await term.waitForUserInput(
-        "What is the AWS profile name?",
-        { default: "default" }
-      );
-      const directory = await term.waitForUserInput(
+      const bucket = await term.waitForInput("What is the AWS S3 bucket name?");
+      const profile = await term.waitForInput("What is the AWS profile name?", {
+        default: "default",
+      });
+      const directory = await term.waitForInput(
         "What is the directory to upload to? Leave blank to store files at the bucket root dir.",
         { allowEmpty: true }
       );
-      const domain = await term.waitForUserInput(
+      const domain = await term.waitForInput(
         "Do you have a custom domain? Leave blank to use AWS default domain.",
         { allowEmpty: true }
       );
@@ -235,7 +230,7 @@ export const processCreateConfig = async () => {
 
     // NFT Storage
     case UploadMethod.NFT_STORAGE: {
-      configData.uploadConfig.nftStorageAuthToken = await term.waitForUserInput(
+      configData.uploadConfig.nftStorageAuthToken = await term.waitForInput(
         "What is the NFT Storage authentication token?"
       );
       break;
@@ -243,7 +238,7 @@ export const processCreateConfig = async () => {
 
     // SHDW
     case UploadMethod.SHDW: {
-      configData.uploadConfig.shdwStorageAccount = await term.waitForUserInput(
+      configData.uploadConfig.shdwStorageAccount = await term.waitForInput(
         "What is the SHDW storage address?",
         { validator: PgCommon.isPk }
       );
@@ -252,25 +247,24 @@ export const processCreateConfig = async () => {
 
     // Pinata
     case UploadMethod.PINATA: {
-      const jwt = await term.waitForUserInput(
+      const jwt = await term.waitForInput(
         "What is your Pinata JWT authentication?"
       );
 
-      const apiGateway = await term.waitForUserInput(
+      const apiGateway = await term.waitForInput(
         "What is the Pinata API gateway for upload?",
         { default: "https://api.pinata.cloud" }
       );
 
-      const contentGateway = await term.waitForUserInput(
+      const contentGateway = await term.waitForInput(
         "What is the Pinata gateway for content retrieval?",
         { default: "https://gateway.pinata.cloud" }
       );
 
       const parallelLimit = parseInt(
-        await term.waitForUserInput(
-          "How many concurrent uploads are allowed?",
-          { validator: PgCommon.isInt }
-        )
+        await term.waitForInput("How many concurrent uploads are allowed?", {
+          validator: PgCommon.isInt,
+        })
       );
 
       configData.uploadConfig.pinataConfig = {
@@ -283,7 +277,7 @@ export const processCreateConfig = async () => {
   }
 
   // Mutability
-  configData.isMutable = await term.waitForUserInput(
+  configData.isMutable = await term.waitForInput(
     "Do you want your NFTs to remain mutable? We HIGHLY recommend you choose yes.",
     { confirm: true, default: "yes" }
   );
@@ -296,22 +290,21 @@ export const processCreateConfig = async () => {
 
   let saveFile = true;
   if (await PgExplorer.fs.exists(PgSugar.PATHS.CANDY_MACHINE_CONFIG_FILEPATH)) {
+    const items = ["Overwrite the file", "Log to console"];
     saveFile =
-      (await term.waitForUserInput(
+      (await term.waitForInput(
         [
           `The file "${PgSugar.PATHS.CANDY_MACHINE_CONFIG_FILEPATH}" already exists.`,
           "Do you want to overwrite it with the new config or log the new config to the console?",
         ].join(" "),
         {
           default: "0",
-          choice: {
-            items: ["Overwrite the file", "Log to console"],
-          },
+          choice: { items },
         }
-      )) === 0;
+      )) === items[0];
   }
 
-  const prettyConfigData = PgCommon.prettyJSON(configData);
+  const prettyConfigData = PgCommon.toPrettyJson(configData);
 
   if (saveFile) {
     term.println(

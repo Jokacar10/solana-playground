@@ -1,10 +1,12 @@
 import { PgCommon } from "../common";
-import type { Accessor, Disposable, SyncOrAsync } from "../types";
+import type { Accessor, Disposable, KeyOf, SyncOrAsync } from "../types";
 
 /** Property names */
 export const PROPS = {
   /** Internal (private) state */
   INTERNAL_STATE: "_state",
+  /** State cache */
+  STATE_CACHE: "_stateCache",
   /** The property name for keeping track of whether the class has been initialized */
   IS_INITIALIZED: "_isInitialized",
   /** Initialization method name */
@@ -42,7 +44,7 @@ export type OnDidChangeDefault<T> = {
 
 /** Non-recursive `onDidChange${propertyName}` method types */
 export type OnDidChangeProperty<T> = {
-  [K in keyof T as `${typeof PROPS.ON_DID_CHANGE}${Capitalize<K>}`]: OnDidChange<
+  [K in KeyOf<T> as `${typeof PROPS.ON_DID_CHANGE}${Capitalize<K>}`]: OnDidChange<
     T[K]
   >;
 };
@@ -69,6 +71,7 @@ export const addInit = (
   onDidInit?: () => SyncOrAsync<Disposable | void>
 ) => {
   sClass[PROPS.INTERNAL_STATE] ??= {};
+  sClass[PROPS.STATE_CACHE] ??= {};
   sClass[PROPS.INITS] ??= [];
   if (init) sClass[PROPS.INITS].push(init);
   if (onDidInit) sClass[PROPS.ON_DID_INIT] = onDidInit;
@@ -89,9 +92,8 @@ export const addInit = (
 
     disposables.push(
       { dispose: () => (sClass[PROPS.IS_INITIALIZED] = false) },
-      { dispose: () => delete sClass[PROPS.ON_DID_INIT] },
-      { dispose: () => (sClass[PROPS.INITS] = []) },
-      { dispose: () => (sClass[PROPS.INTERNAL_STATE] = {}) }
+      { dispose: () => (sClass[PROPS.INTERNAL_STATE] = {}) },
+      { dispose: () => (sClass[PROPS.STATE_CACHE] = {}) }
     );
 
     return {
@@ -199,22 +201,27 @@ export const addOnDidChange = (
   };
 
   // Dispatch change event(s)
-  sClass[PROPS.DISPATCH_CHANGE_EVENT] = (accessor?: Accessor) => {
+  sClass[PROPS.DISPATCH_CHANGE_EVENT] = (
+    accessor: Accessor = [],
+    noCache?: boolean
+  ) => {
     // Only dispatch if the state has been initialized
     if (!sClass[PROPS.IS_INITIALIZED]) return;
 
-    // Dispatch the prop update event if `prop` exists
-    if (accessor) {
+    // Dispatch the prop update event if `accessor` exists
+    if (accessor.length) {
+      const cache = sClass[PROPS.STATE_CACHE];
+      const cacheKey = PgCommon.normalizeAccessor(accessor).join("_");
       const value = PgCommon.getValue(sClass, accessor);
-      const prevProp = "__prev" + PgCommon.normalizeAccessor(accessor).join("");
 
       // Only dispatch if the value changes.
       //
-      // NOTE: The strict equality check is not enough for objects since it only
-      // compares by memory location.
-      if (sClass[prevProp] === value && typeof value !== "object") return;
+      // NOTE: This part has caused a lot of problems. Extra attention should be
+      // given when changing it, as many parts depend on this assumption i.e.
+      // cached values are compared by reference.
+      if (cache[cacheKey] === value) return;
 
-      sClass[prevProp] = value;
+      if (!noCache) cache[cacheKey] = value;
       PgCommon.createAndDispatchCustomEvent(
         getChangeEventName(accessor),
         value

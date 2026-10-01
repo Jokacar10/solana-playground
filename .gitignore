@@ -3,7 +3,7 @@
 **/target
 
 # Generated package imports
-**/client/package.ts
+**/js-runtime/package.ts
 
 # Generated TS files
 **/generated.ts
@@ -12,7 +12,7 @@
 */build
 
 # Misc
-*/.env
+.env
 */deploy.sh
 
 */npm-debug.log*
@@ -20,10 +20,14 @@
 */yarn-error.log*
 
 # Server
-server/mongodb
+server/packages/*
+!server/packages/plugins
+!server/packages/polyfills
+!server/packages/webpack.config.js
 server/programs/*
 !server/programs/Cargo.*
 !server/programs/default
 
 # WASM
 **/www
+.vercel

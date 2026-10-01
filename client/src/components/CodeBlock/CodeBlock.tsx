@@ -1,7 +1,7 @@
 import { useState } from "react";
 import styled, { css, useTheme } from "styled-components";
 
-import CopyButton from "../CopyButton";
+import Button from "../Button";
 import { highlight } from "./highlight";
 import { PgTheme } from "../../utils";
 import { useAsyncEffect, useDifferentBackground } from "../../hooks";
@@ -20,7 +20,7 @@ const CodeBlock = ({ lang, children: code, ...props }: CodeBlockProps) => {
   return (
     <Wrapper ref={wrapperRef} {...props}>
       <CopyButtonWrapper ref={copyButtonWrapperRef}>
-        <CopyButton copyText={code} />
+        <Button.Copy copyText={code} />
       </CopyButtonWrapper>
 
       <Code lang={lang}>{code}</Code>
@@ -39,7 +39,7 @@ const Wrapper = styled.div`
       font-size: ${theme.font.code.size.medium};
       overflow: auto;
 
-      ${PgTheme.getScrollbarCSS()};
+      ${PgTheme.getScrollbarCss()};
     }
 
     & > :first-child {
@@ -83,7 +83,7 @@ const Code = ({ children, lang }: CodeBlockProps) => {
       const highlightedHtml = await highlight(
         children,
         lang,
-        PgTheme.convertToTextMateTheme(theme)
+        PgTheme.toTextMateTheme(theme)
       );
       setHtml(highlightedHtml);
     } else {

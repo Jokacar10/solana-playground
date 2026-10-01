@@ -2,7 +2,13 @@ import { Option, toBigNumber } from "@metaplex-foundation/js";
 
 import { parseGuards } from "./guards";
 import { PgSugar } from "../processor";
-import { PgCommon, PgExplorer, PgTerminal, PgWeb3 } from "../../../utils";
+import {
+  PgCodec,
+  PgCommon,
+  PgExplorer,
+  PgTerminal,
+  PgWeb3,
+} from "../../../utils";
 import type { ConfigData, ToPrimitive } from "../types";
 
 export const loadConfigData = async (): Promise<ConfigData> => {
@@ -44,27 +50,21 @@ export const loadConfigData = async (): Promise<ConfigData> => {
 };
 
 export const saveConfigData = async (configData: ConfigData) => {
-  await PgExplorer.createItem(
+  await PgExplorer.saveItem(
     PgSugar.PATHS.CANDY_MACHINE_CONFIG_FILEPATH,
-    PgCommon.prettyJSON({
+    PgCommon.toPrettyJson({
       ...configData,
       size: configData.size.toNumber(),
       hiddenSettings: configData.hiddenSettings
         ? {
             ...configData.hiddenSettings,
-            hash: PgCommon.decodeBytes(
-              Uint8Array.from(configData.hiddenSettings.hash)
-            ),
+            hash: PgCodec.decodeText(configData.hiddenSettings.hash),
           }
         : null,
       creators: configData.creators.map((c) => ({
         ...c,
         address: c.address.toBase58(),
       })),
-    }),
-    {
-      override: true,
-      openOptions: { onlyRefreshIfAlreadyOpen: true },
-    }
+    })
   );
 };

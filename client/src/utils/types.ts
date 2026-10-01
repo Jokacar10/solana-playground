@@ -1,3 +1,6 @@
+/** Get the keys of `T` (strings) */
+export type KeyOf<T> = Extract<keyof T, string>;
+
 /** Get value of the given object */
 export type ValueOf<T extends object> = T[keyof T];
 
@@ -27,9 +30,6 @@ export type Tuple<
   R extends unknown[] = []
 > = R["length"] extends L ? R : Tuple<T, L, [T, ...R]>;
 
-/** Tuple double string */
-export type TupleString = Tuple<string, 2>;
-
 /** Map union to tuple */
 export type UnionToTuple<U> = MergeUnion<
   U extends never ? never : (union: U) => U
@@ -44,8 +44,9 @@ export type MergeUnion<U> = (
   ? R
   : never;
 
+/** An object that can be disposed */
 export type Disposable = {
-  /** Clear registered events */
+  /** Dispose; clear all listeners */
   dispose: () => void;
 };
 

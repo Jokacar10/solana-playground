@@ -3,11 +3,11 @@ import {
   PgExplorer,
   PgGlobal,
   PgLanguage,
-  PgPackage,
   PgProgramInfo,
   PgServer,
   PgSettings,
   PgTerminal,
+  PgWasmPackage,
   PgWeb3,
   TupleFiles,
 } from "../../utils";
@@ -20,15 +20,19 @@ export const build = createCmd({
     PgGlobal.update({ buildLoading: true });
     PgTerminal.println(PgTerminal.info("Building..."));
 
-    let msg;
     try {
-      const output = await processBuild();
-      msg = improveOutput(output.stderr);
-    } catch (e: any) {
-      const convertedError = PgTerminal.convertErrorMessage(e.message);
-      msg = `Build error: ${convertedError}`;
+      const result = await buildProgram();
+      // Server only returns `uuid` on the first build of a session, so we
+      // can't use it as a success signal. Mirror the server's own check on
+      // `stderr` so deploy can warn before reusing a stale binary.
+      const failed = result.stderr.includes("error: could not compile");
+      PgProgramInfo.update({
+        idl: result.idl,
+        uuid: result.uuid ?? undefined,
+        lastBuildFailed: failed,
+      });
+      PgTerminal.println(improveOutput(result.stderr));
     } finally {
-      PgTerminal.println(msg + "\n");
       PgGlobal.update({ buildLoading: false });
     }
   },
@@ -37,78 +41,15 @@ export const build = createCmd({
 /**
  * Compile the current project.
  *
- * @returns build output from stderr(not only errors)
+ * @returns the build response
  */
-const processBuild = async () => {
+const buildProgram = async () => {
   const buildFiles = getBuildFiles();
-  const pythonFiles = buildFiles.filter(([fileName]) =>
-    fileName.toLowerCase().endsWith(".py")
+  const pythonFiles = buildFiles.filter(
+    ([path]) => PgLanguage.getFromPath(path)?.name === "Python"
   );
-
-  if (pythonFiles.length > 0) {
-    return await buildPython(pythonFiles);
-  }
-
+  if (pythonFiles.length > 0) return await buildPython(pythonFiles);
   return await buildRust(buildFiles);
-};
-
-/**
- * Build rust files and return the output.
- *
- * @param files Rust files from `src/`
- * @returns Build output from stderr(not only errors)
- */
-const buildRust = async (files: TupleFiles) => {
-  if (!files.length) throw new Error("Couldn't find any Rust files.");
-
-  const resp = await PgServer.build({
-    files,
-    uuid: PgProgramInfo.uuid,
-    flags: PgSettings.build.flags,
-  });
-
-  // Update program info
-  PgProgramInfo.update({
-    uuid: resp.uuid ?? undefined,
-    idl: resp.idl,
-  });
-
-  return { stderr: resp.stderr };
-};
-
-/**
- * Convert Python files into Rust with seahorse-compile-wasm and run `_buildRust`.
- *
- * @param pythonFiles Python files in `src/`
- * @returns Build output from stderr(not only errors)
- */
-const buildPython = async (pythonFiles: TupleFiles) => {
-  const { compileSeahorse } = await PgPackage.import("seahorse-compile");
-
-  const rustFiles = pythonFiles.flatMap(([path, content]) => {
-    const seahorseProgramName =
-      PgExplorer.getItemNameFromPath(path).split(".py")[0];
-    const compiledContent = compileSeahorse(content, seahorseProgramName);
-
-    if (compiledContent.length === 0) {
-      throw new Error("Seahorse compile failed");
-    }
-
-    // Seahorse compile outputs a flattened array like [filepath, content, filepath, content]
-    const files: TupleFiles = [];
-    for (let i = 0; i < compiledContent.length; i += 2) {
-      const path = compiledContent[i];
-      let content = compiledContent[i + 1];
-      // The build server detects #[program] to determine if Anchor
-      // Seahorse (without rustfmt) outputs # [program]
-      content = content.replace("# [program]", "#[program]");
-      files.push([path, content]);
-    }
-
-    return files;
-  });
-
-  return await buildRust(rustFiles);
 };
 
 /**
@@ -124,18 +65,45 @@ const getBuildFiles = () => {
     programPkStr = kp.publicKey.toBase58();
   }
 
+  /**
+   * Update the `declare_id!` macro in Rust source content with the current
+   * program's public key.
+   *
+   * @param content - The Rust source file content as a string
+   * @returns An object containing:
+   * - `content` - The updated source content with the new program ID injected
+   * - `updated` - A boolean indicating whether the ID was updated
+   */
   const updateIdRust = (content: string) => {
     let updated = false;
+    let insideBlockComment = false;
+    const rustDeclareIdRegex = /^(([\w]+::)*)declare_id!\("(\w*)"\)/;
+    const newContent = content
+      .split("\n")
+      .map((line) => {
+        // Track block comment opening
+        if (line.includes("/*")) insideBlockComment = true;
 
-    const rustDeclareIdRegex = /^(([\w]+::)*)declare_id!\("(\w*)"\)/gm;
-    const newContent = content.replace(rustDeclareIdRegex, (match) => {
-      const res = rustDeclareIdRegex.exec(match);
-      if (!res) return match;
-      updated = true;
+        // If inside block comment, skip line entirely
+        if (insideBlockComment) {
+          // Track block comment closing
+          if (line.includes("*/")) insideBlockComment = false;
+          return line;
+        }
 
-      // res[1] could be solana_program:: or undefined
-      return (res[1] ?? "\n") + `declare_id!("${programPkStr}")`;
-    });
+        // Skip single-line comments
+        if (line.trimStart().startsWith("//")) return line;
+
+        return line.replace(rustDeclareIdRegex, (match) => {
+          const res = rustDeclareIdRegex.exec(match);
+          if (!res) return match;
+          updated = true;
+
+          // `res[1]` could be `solana_program::` or `undefined`
+          return (res[1] ?? "") + `declare_id!("${programPkStr}")`;
+        });
+      })
+      .join("\n");
 
     return { content: newContent, updated };
   };
@@ -194,13 +162,87 @@ const getBuildFiles = () => {
     // Remove the workspace from path because build only needs /src
     const buildPath = PgCommon.joinPaths(
       PgExplorer.PATHS.ROOT_DIR_PATH,
-      PgExplorer.getRelativePath(path)
+      PgExplorer.toRelativePath(path)
     );
     buildFiles.push([buildPath, content]);
   }
 
+  // TODO: Add `cargo` files
+
   return buildFiles;
 };
+
+/**
+ * Convert Python files into Rust with seahorse-compile-wasm and run `_buildRust`.
+ *
+ * @param pythonFiles Python files in `src/`
+ * @returns the build response
+ */
+const buildPython = async (pythonFiles: TupleFiles) => {
+  const { compileSeahorse } = await PgWasmPackage.import("seahorse-compile");
+
+  const rustFiles = pythonFiles.flatMap(([path, content]) => {
+    const seahorseProgramName =
+      PgExplorer.getItemNameFromPath(path).split(".py")[0];
+    const compiledContent = compileSeahorse(content, seahorseProgramName);
+
+    if (compiledContent.length === 0) {
+      throw new Error("Seahorse compile failed");
+    }
+
+    // Seahorse compile outputs a flattened array like [filepath, content, filepath, content]
+    const files: TupleFiles = [];
+    for (let i = 0; i < compiledContent.length; i += 2) {
+      const path = compiledContent[i];
+      let content = compiledContent[i + 1];
+      // The build server detects #[program] to determine if Anchor
+      // Seahorse (without rustfmt) outputs # [program]
+      content = content.replace("# [program]", "#[program]");
+      files.push([path, content]);
+    }
+
+    return files;
+  });
+
+  return await buildRust(rustFiles);
+};
+
+/**
+ * Build Rust files and return the output.
+ *
+ * @param files Rust files from `src/`
+ * @returns the build response
+ */
+const buildRust = async (files: TupleFiles) => {
+  if (!files.length) throw new Error("Couldn't find any Rust files.");
+
+  return await PgServer.build({
+    files,
+    uuid: PgProgramInfo.uuid,
+    flags: PgSettings.build.flags,
+  });
+};
+
+/**
+ * Solutions to suggest for common build errors.
+ *
+ * The `pattern` is tested against a single error rather than the full output.
+ */
+const SUGGESTIONS = [
+  {
+    // Deriving `InitSpace` implements the `Space` trait, which is what
+    // provides the `INIT_SPACE` constant. Using the derive macro's name as if
+    // it were the constant is a common mistake.
+    pattern: /no associated item named `InitSpace` found/,
+    suggestion:
+      "The constant is named `INIT_SPACE`, not `InitSpace`. It's generated by adding `#[derive(InitSpace)]` to the struct.",
+  },
+  {
+    pattern: /no associated item named `INIT_SPACE` found/,
+    suggestion:
+      "Add `#[derive(InitSpace)]` to the struct in order to generate `INIT_SPACE`.",
+  },
+];
 
 /**
  * Improve build output that is returned from the build request.
@@ -219,7 +261,7 @@ const improveOutput = (output: string) => {
     .replace(/(\/home\/\w+)\//gm, (match, home) => match.replace(home, "~"))
 
     // Remove compiling output
-    .replace(/\s*Compiling\ssolpg.*/, "")
+    .replace(/\s+Compiling\s.*/, "")
 
     // Replace `solpg` name with the current workspace name
     .replaceAll("solpg", PgExplorer.currentWorkspaceName ?? "solpg")
@@ -314,10 +356,18 @@ const improveOutput = (output: string) => {
       // Output should be overridden only in the case of display errors length
       // being non-zero
       if (displayErrors.length) {
-        output = displayErrors.reduce(
-          (acc, cur, i) => (i < MAX_ERROR_AMOUNT ? acc + cur : acc),
-          ""
-        );
+        const shownErrors = displayErrors.slice(0, MAX_ERROR_AMOUNT);
+        output = shownErrors.reduce((acc, cur) => acc + cur, "");
+
+        // Suggest solutions for common errors. Only the shown errors are
+        // checked because suggesting a solution for an error that is not in
+        // the output would be confusing.
+        const suggestions = SUGGESTIONS.filter((s) => {
+          return shownErrors.some((err) => s.pattern.test(err));
+        });
+        for (const { suggestion } of suggestions) {
+          output += `Suggestion: ${suggestion}\n`;
+        }
 
         if (displayErrors.length > MAX_ERROR_AMOUNT) {
           output += [

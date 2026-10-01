@@ -1,10 +1,8 @@
 mod config;
-mod db;
-mod error;
-mod log;
 mod middlewares;
-mod program;
 mod routes;
+#[cfg(feature = "unstable")]
+mod setup;
 
 use std::net::{Ipv4Addr, SocketAddr};
 
@@ -14,28 +12,62 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use solpg_server::{
+    db,
+    log::{self, info},
+};
 use tokio::net::TcpListener;
-use tracing::info;
 
-use self::{config::Config, log::init_logging, middlewares::*, routes::*};
+use self::{config::Config, middlewares::*, routes::*};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let config = Config::from_env();
-    init_logging(config.verbose);
+    let config = Config::from_env()?;
+    log::init(config.verbose);
     info!("Config loaded: {config:#?}");
+
+    #[cfg(feature = "unstable")]
+    setup::setup().await?;
 
     db::init(&config.db_uri, config.db_name).await?;
     info!("DB initialized");
 
+    let stable_routes = Router::new()
+        .route(
+            "/build",
+            post(build).with_state(BuildState::new(config.build_concurrency)),
+        )
+        .route("/deploy/{uuid}", get(deploy))
+        .route("/share/{id}", get(share_get))
+        .route("/new", post(share_new));
+
+    let unstable_routes = if cfg!(feature = "unstable") {
+        let build_concurrency = config.unstable_build.limits.route.concurrency;
+        let bundle_concurrency = config.unstable_bundle.limits.route.concurrency;
+        Router::new()
+            .route(
+                "/build",
+                post(unstable::build)
+                    .with_state(unstable::BuildState::new(config.unstable_build))
+                    .layer(concurrency_limit(build_concurrency)),
+            )
+            .route("/deploy/{uuid}", get(unstable::deploy))
+            .route(
+                "/bundle",
+                post(unstable::bundle)
+                    .with_state(unstable::BundleState::new(config.unstable_bundle))
+                    .layer(concurrency_limit(bundle_concurrency)),
+            )
+    } else {
+        Router::new()
+    };
+
     let app = Router::new()
-        .route("/build", post(build))
-        .route("/deploy/:uuid", get(deploy))
-        .route("/share/:id", get(share_get))
-        .route("/new", post(share_new))
+        .merge(stable_routes)
+        .nest("/unstable", unstable_routes)
         .layer(compression())
         .layer(payload_limit(config.payload_limit))
-        .layer(cors(config.client_url))
+        .layer(cors(config.client_urls))
         .layer(middleware::from_fn(log));
 
     let addr = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));

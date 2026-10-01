@@ -54,13 +54,10 @@ const handleTutorial = (name: string, page: string) => {
   if (!tutorial) {
     return handleRoute({
       main: {
-        name: "NotFound",
+        name: "Error",
         props: {
           text: `Tutorial not found: ${PgCommon.toTitleFromKebab(name)}`,
-          navigate: {
-            name: "See all tutorials",
-            path: "/tutorials",
-          },
+          navigation: { name: "See all tutorials", path: "/tutorials" },
         },
       },
       sidebar: {
@@ -157,6 +154,8 @@ const handleTutorial = (name: string, page: string) => {
     disposables.push({ dispose: () => (PgView.sidebar.props = {}) });
   } else if (!PgView.sidebar.name || PgView.sidebar.name === "Tutorials") {
     PgView.sidebar.name = "Explorer";
+  } else {
+    PgView.sidebar.props = {};
   }
 
   // Minimize secondary main view and reopen on navigation to other routes
@@ -196,7 +195,20 @@ const getAllTutorials = async (): Promise<TutorialFullData[]> => {
     PgTutorial.all.map(async (t) => {
       const tutorial: Partial<TutorialFullData> = { ...t };
       if (PgTutorial.isStarted(t.name)) {
-        const metadata = await PgTutorial.getMetadata(t.name);
+        // Use the up-to-date state data for the current tutorial because there
+        // is a slight delay before tutorial metadata gets saved to storage.
+        //
+        // TODO: Make sure this function runs again after tutorial metadata gets
+        // saved to storage and remove this workaround.
+        const metadata =
+          t.name === PgTutorial.current?.name &&
+          typeof PgTutorial.completed === "boolean" &&
+          typeof PgTutorial.pageNumber === "number"
+            ? {
+                completed: PgTutorial.completed,
+                pageNumber: PgTutorial.pageNumber,
+              }
+            : await PgTutorial.getMetadata(t.name);
         tutorial.metadata = metadata;
         tutorial.progress = metadata.completed ? "Completed" : "Ongoing";
       } else {

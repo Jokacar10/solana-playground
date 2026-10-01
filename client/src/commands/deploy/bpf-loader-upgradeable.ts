@@ -18,25 +18,22 @@ export class BpfLoaderUpgradeable {
   ) {
     const { wallet } = this._getOptions(opts);
 
-    const tx = new PgWeb3.Transaction()
-      .add(
-        PgWeb3.SystemProgram.createAccount({
-          fromPubkey: wallet.publicKey,
-          newAccountPubkey: buffer.publicKey,
-          lamports,
-          space:
-            PgWeb3.BpfLoaderUpgradeableProgram.getBufferAccountSize(programLen),
-          programId: PgWeb3.BpfLoaderUpgradeableProgram.programId,
-        })
-      )
-      .add(
-        PgWeb3.BpfLoaderUpgradeableProgram.initializeBuffer({
-          bufferPk: buffer.publicKey,
-          authorityPk: wallet.publicKey,
-        })
-      );
+    const ixs = [
+      PgWeb3.SystemProgram.createAccount({
+        fromPubkey: wallet.publicKey,
+        newAccountPubkey: buffer.publicKey,
+        lamports,
+        space:
+          PgWeb3.BpfLoaderUpgradeableProgram.getBufferAccountSize(programLen),
+        programId: PgWeb3.BpfLoaderUpgradeableProgram.programId,
+      }),
+      PgWeb3.BpfLoaderUpgradeableProgram.initializeBuffer({
+        bufferPk: buffer.publicKey,
+        authorityPk: wallet.publicKey,
+      }),
+    ];
 
-    return await PgTx.send(tx, { keypairSigners: [buffer], wallet });
+    return await PgTx.send(ixs, { keypairSigners: [buffer], wallet });
   }
 
   /** Update the buffer authority. */
@@ -47,32 +44,33 @@ export class BpfLoaderUpgradeable {
   ) {
     const { wallet } = this._getOptions(opts);
 
-    const tx = new PgWeb3.Transaction().add(
-      PgWeb3.BpfLoaderUpgradeableProgram.setBufferAuthority({
-        bufferPk,
-        authorityPk: wallet.publicKey,
-        newAuthorityPk,
-      })
-    );
+    const ix = PgWeb3.BpfLoaderUpgradeableProgram.setBufferAuthority({
+      bufferPk,
+      authorityPk: wallet.publicKey,
+      newAuthorityPk,
+    });
 
-    return await PgTx.send(tx, { wallet });
+    return await PgTx.send(ix, { wallet });
   }
 
   /** Load programData to the initialized buffer account. */
   static async loadBuffer(
     bufferPk: PgWeb3.PublicKey,
-    programData: Buffer,
+    bytes: Uint8Array,
     opts?: {
       loadConcurrency?: number;
       abortController?: AbortController;
-      onWrite?: (offset: number) => void;
+      onWrite?: (current: number, total: number) => void;
       onMissing?: (missingCount: number) => void;
+      onRateLimit?: (retryAfter: number) => void;
     } & WalletOption
   ) {
+    const programBytes = Buffer.from(bytes);
     const { wallet } = this._getOptions(opts);
     const { loadConcurrency } = PgCommon.setDefault(opts, {
       loadConcurrency: 8,
     });
+    const connection = PgConnection.current;
 
     // Maximal chunk of the data per tx
     const WRITE_CHUNK_SIZE =
@@ -84,90 +82,131 @@ export class BpfLoaderUpgradeable {
     // Simulate to get the compute unit consumption of a write transaction and
     // reuse it for all writes since they all consume the same amount of CU
     const { unitsConsumed: computeUnitLimit } = await PgTx.simulate(
-      new PgWeb3.Transaction().add(
-        PgWeb3.BpfLoaderUpgradeableProgram.write({
-          offset: 0,
-          bytes: programData.slice(0, WRITE_CHUNK_SIZE),
-          bufferPk,
-          authorityPk: wallet.publicKey,
-        })
-      ),
-      { computeUnitLimit: PgWeb3.MAX_COMPUTE_UNIT_LIMIT }
+      PgWeb3.BpfLoaderUpgradeableProgram.write({
+        offset: 0,
+        bytes: programBytes.slice(0, WRITE_CHUNK_SIZE),
+        bufferPk,
+        authorityPk: wallet.publicKey,
+      }),
+      { computeUnitLimit: PgWeb3.MAX_COMPUTE_UNIT_LIMIT, wallet }
     );
 
-    const loadBuffer = async (indices: number[], isMissing?: boolean) => {
-      if (isMissing) opts?.onMissing?.(indices.length);
+    const loadBuffer = async (missingIndices: number[]) => {
+      if (missingIndices.length < indices.length) {
+        opts?.onMissing?.(missingIndices.length);
+      }
 
       let i = 0;
+      let successCount = 0;
+      let lastTxHash: string | undefined;
+      let isRateLimited = false;
       await Promise.all(
         new Array(loadConcurrency).fill(null).map(async () => {
           while (1) {
             if (opts?.abortController?.signal.aborted) return;
+            if (isRateLimited) break;
 
-            const offset = indices[i] * WRITE_CHUNK_SIZE;
+            const offset = missingIndices[i] * WRITE_CHUNK_SIZE;
             i++;
             const endOffset = offset + WRITE_CHUNK_SIZE;
-            const bytes = programData.slice(offset, endOffset);
-            if (bytes.length === 0) break;
+            const slice = programBytes.slice(offset, endOffset);
+            if (slice.length === 0) break;
 
-            const tx = new PgWeb3.Transaction().add(
-              PgWeb3.BpfLoaderUpgradeableProgram.write({
-                offset,
-                bytes,
-                bufferPk,
-                authorityPk: wallet.publicKey,
-              })
-            );
+            const ix = PgWeb3.BpfLoaderUpgradeableProgram.write({
+              offset,
+              bytes: slice,
+              bufferPk,
+              authorityPk: wallet.publicKey,
+            });
 
             try {
-              await PgTx.send(tx, { wallet, computeUnitLimit });
-              if (!isMissing) opts?.onWrite?.(endOffset);
+              lastTxHash = await PgTx.send(ix, { wallet, computeUnitLimit });
+              successCount++;
+              const total = indices.length;
+              const current = total - missingIndices.length + successCount;
+              opts?.onWrite?.(current, total);
             } catch (e: any) {
-              console.log("Buffer write error:", e.message);
+              if (isRateLimited) break;
+
+              console.log("Buffer write error:", e);
+              if (!(e instanceof Error)) continue;
+
+              // Naively parse the error message. Example error message:
+              // `429 :  {"jsonrpc":"2.0","error":{"code": 429, "message":"Too many requests for a specific RPC call"}, "id": "1840af2d-8e39-494a-8e3f-69ca0099d4e4" } \r\n`
+              //
+              // TODO: Make use of the `X-Ratelimit-Method-Remaining` response
+              // header. At the time of writing this comment, the default devnet
+              // RPC returns 150 for `X-Ratelimit-Method-Limit`, but it only allows
+              // 40 requests in practice. This value matches `...Conn-Limit` and
+              // `...Connrate-Limit`, but their `*-Remaining` counterparts do
+              // not decrease with each request; when `...Method-Remaining`
+              // falls to 110 (150 - 40), the next request triggers to the same
+              // RPC method triggers the rate limit.
+              const msg = e.message.trim();
+              const maybeResponseStr = msg.substring(
+                msg.indexOf("{"),
+                msg.lastIndexOf("}") + 1
+              );
+              try {
+                const response = JSON.parse(maybeResponseStr);
+                isRateLimited = response.error?.code === 429;
+                if (isRateLimited) break;
+              } catch {}
             }
           }
         })
       );
+      if (opts?.abortController?.signal.aborted) return;
+
+      if (isRateLimited) {
+        // TODO: Make use of the `Retry-After` response header
+        const retryAfter = 10; // this is what `Retry-After` returns currently
+        opts?.onRateLimit?.(retryAfter);
+        await PgCommon.sleep(retryAfter * 1000, opts?.abortController);
+        if (opts?.abortController?.signal.aborted) return;
+      }
+
+      // Wait for the last transaction to confirm
+      if (lastTxHash) {
+        try {
+          await PgTx.confirm(lastTxHash);
+        } catch {
+          const confirmations = connection.commitment === "finalized" ? 32 : 1;
+          await PgCommon.sleep(confirmations * PgWeb3.DEFAULT_MS_PER_SLOT);
+        }
+      }
     };
 
-    const txCount = Math.ceil(programData.length / WRITE_CHUNK_SIZE);
+    const txCount = Math.ceil(programBytes.length / WRITE_CHUNK_SIZE);
     const indices = new Array(txCount).fill(null).map((_, i) => i);
-    let isMissing = false;
 
     // Retry until all bytes are written
     while (1) {
       if (opts?.abortController?.signal.aborted) return;
 
-      // Wait for last transaction to confirm
-      await PgCommon.sleep(500);
-
       // Even though we only get to this function after buffer account creation
       // gets confirmed, the RPC can still return `null` here if it's behind.
       const bufferAccount = await PgCommon.tryUntilSuccess(async () => {
-        const acc = await PgConnection.current.getAccountInfo(bufferPk);
+        const acc = await connection.getAccountInfo(bufferPk);
         if (!acc) throw new Error();
         return acc;
-      }, 2000);
+      }, 1000);
 
-      const onChainProgramData = bufferAccount.data.slice(
-        PgWeb3.BpfLoaderUpgradeableProgram.BUFFER_ACCOUNT_METADATA_SIZE,
-        PgWeb3.BpfLoaderUpgradeableProgram.BUFFER_ACCOUNT_METADATA_SIZE +
-          programData.length
+      const onChainProgramBytes = bufferAccount.data.slice(
+        PgWeb3.BpfLoaderUpgradeableProgram.BUFFER_METADATA_SIZE,
+        PgWeb3.BpfLoaderUpgradeableProgram.BUFFER_METADATA_SIZE +
+          programBytes.length
       );
-      if (onChainProgramData.equals(programData)) break;
+      if (onChainProgramBytes.equals(programBytes)) break;
 
-      const missingIndices = indices
-        .map((i) => {
-          const start = i * WRITE_CHUNK_SIZE;
-          const end = start + WRITE_CHUNK_SIZE;
-          const actualSlice = programData.slice(start, end);
-          const onChainSlice = onChainProgramData.slice(start, end);
-          if (!actualSlice.equals(onChainSlice)) return i;
-          return null;
-        })
-        .filter(PgCommon.isNonNullish);
-      await loadBuffer(missingIndices, isMissing);
-      isMissing = true;
+      const missingIndices = indices.filter((i) => {
+        const start = i * WRITE_CHUNK_SIZE;
+        const end = start + WRITE_CHUNK_SIZE;
+        const actualSlice = programBytes.slice(start, end);
+        const onChainSlice = onChainProgramBytes.slice(start, end);
+        return !actualSlice.equals(onChainSlice);
+      });
+      await loadBuffer(missingIndices);
     }
   }
 
@@ -175,67 +214,61 @@ export class BpfLoaderUpgradeable {
   static async closeBuffer(bufferPk: PgWeb3.PublicKey, opts?: WalletOption) {
     const { wallet } = this._getOptions(opts);
 
-    const tx = new PgWeb3.Transaction().add(
-      PgWeb3.BpfLoaderUpgradeableProgram.close({
-        closePk: bufferPk,
-        recipientPk: wallet.publicKey,
-        authorityPk: wallet.publicKey,
-      })
-    );
+    const ix = PgWeb3.BpfLoaderUpgradeableProgram.close({
+      closePk: bufferPk,
+      recipientPk: wallet.publicKey,
+      authorityPk: wallet.publicKey,
+    });
 
-    return await PgTx.send(tx, { wallet });
+    return await PgTx.send(ix, { wallet });
   }
 
   /** Create a program account from initialized buffer. */
   static async deployProgram(
     program: PgWeb3.Signer,
     bufferPk: PgWeb3.PublicKey,
-    programLamports: number,
     maxDataLen: number,
     opts?: WalletOption
   ) {
     const { wallet } = this._getOptions(opts);
 
-    const tx = new PgWeb3.Transaction()
-      .add(
-        PgWeb3.SystemProgram.createAccount({
-          fromPubkey: wallet.publicKey,
-          newAccountPubkey: program.publicKey,
-          lamports: programLamports,
-          space: PgWeb3.BpfLoaderUpgradeableProgram.PROGRAM_ACCOUNT_SIZE,
-          programId: PgWeb3.BpfLoaderUpgradeableProgram.programId,
-        })
-      )
-      .add(
-        PgWeb3.BpfLoaderUpgradeableProgram.deployWithMaxProgramLen({
-          programPk: program.publicKey,
-          bufferPk,
-          upgradeAuthorityPk: wallet.publicKey,
-          payerPk: wallet.publicKey,
-          maxDataLen,
-        })
-      );
+    const ixs = [
+      PgWeb3.SystemProgram.createAccount({
+        fromPubkey: wallet.publicKey,
+        newAccountPubkey: program.publicKey,
+        lamports: await PgConnection.current.getMinimumBalanceForRentExemption(
+          PgWeb3.BpfLoaderUpgradeableProgram.PROGRAM_ACCOUNT_SIZE
+        ),
+        space: PgWeb3.BpfLoaderUpgradeableProgram.PROGRAM_ACCOUNT_SIZE,
+        programId: PgWeb3.BpfLoaderUpgradeableProgram.programId,
+      }),
+      PgWeb3.BpfLoaderUpgradeableProgram.deployWithMaxProgramLen({
+        programPk: program.publicKey,
+        bufferPk,
+        upgradeAuthorityPk: wallet.publicKey,
+        payerPk: wallet.publicKey,
+        maxDataLen,
+      }),
+    ];
 
-    return await PgTx.send(tx, { wallet, keypairSigners: [program] });
+    return await PgTx.send(ixs, { wallet, keypairSigners: [program] });
   }
 
-  /** Update the program authority. */
-  static async setProgramAuthority(
+  /** Extend the program data account. */
+  static async extendProgram(
     programPk: PgWeb3.PublicKey,
-    newAuthorityPk?: PgWeb3.PublicKey,
+    additionalBytes: number,
     opts?: WalletOption
   ) {
     const { wallet } = this._getOptions(opts);
 
-    const tx = new PgWeb3.Transaction().add(
-      PgWeb3.BpfLoaderUpgradeableProgram.setUpgradeAuthority({
-        programPk,
-        authorityPk: wallet.publicKey,
-        newAuthorityPk,
-      })
-    );
+    const ix = PgWeb3.BpfLoaderUpgradeableProgram.extendProgram({
+      programPk,
+      additionalBytes,
+      payerPk: wallet.publicKey,
+    });
 
-    return await PgTx.send(tx, { wallet });
+    return await PgTx.send(ix, { wallet });
   }
 
   /** Upgrade a program. */
@@ -246,40 +279,20 @@ export class BpfLoaderUpgradeable {
   ) {
     const { wallet } = this._getOptions(opts);
 
-    const tx = new PgWeb3.Transaction().add(
-      PgWeb3.BpfLoaderUpgradeableProgram.upgrade({
-        programPk,
-        bufferPk,
-        authorityPk: wallet.publicKey,
-        spillPk: wallet.publicKey,
-      })
-    );
+    const ix = PgWeb3.BpfLoaderUpgradeableProgram.upgrade({
+      programPk,
+      bufferPk,
+      authorityPk: wallet.publicKey,
+      spillPk: wallet.publicKey,
+    });
 
-    return await PgTx.send(tx, { wallet });
+    return await PgTx.send(ix, { wallet });
   }
 
-  /** Close the program account and withdraw funds. */
-  static async closeProgram(programPk: PgWeb3.PublicKey, opts?: WalletOption) {
-    const { wallet } = this._getOptions(opts);
-
-    const tx = new PgWeb3.Transaction().add(
-      PgWeb3.BpfLoaderUpgradeableProgram.close({
-        closePk:
-          PgWeb3.BpfLoaderUpgradeableProgram.getProgramDataAddress(programPk),
-        recipientPk: wallet.publicKey,
-        authorityPk: wallet.publicKey,
-        programPk,
-      })
-    );
-
-    return await PgTx.send(tx, { wallet });
-  }
-
-  /** Get the connection and wallet instance. */
+  /** Get the wallet option. */
   private static _getOptions(opts?: WalletOption) {
     const wallet = opts?.wallet ?? PgWallet.current;
     if (!wallet) throw new Error("Wallet is not connected");
-
     return { wallet };
   }
 }

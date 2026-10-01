@@ -3,13 +3,13 @@ import styled from "styled-components";
 
 import Text from "../../../../components/Text";
 import Button, { ButtonProps } from "../../../../components/Button";
+import { Pause, Rocket, Triangle } from "../../../../components/Icons";
 import { PgCommand, PgGlobal } from "../../../../utils";
 import {
   useProgramInfo,
   useRenderOnChange,
   useWallet,
 } from "../../../../hooks";
-import { Pause, Triangle } from "../../../../components/Icons";
 
 const Deploy = () => {
   const buildLoading = useRenderOnChange(PgGlobal.onDidChangeBuildLoading);
@@ -22,7 +22,7 @@ const Deploy = () => {
   const hasProgramKp = !!programInfo.kp;
   const hasUuid = !!programInfo.uuid;
   const importedProgram = programInfo.importedProgram;
-  const isImportedProgram = !!importedProgram?.buffer.length;
+  const isImportedProgram = !!importedProgram?.bytes.length;
 
   const wallet = useWallet();
   const hasAuthority = wallet
@@ -46,24 +46,7 @@ const Deploy = () => {
   const deployButtonProps = useMemo<ButtonProps>(
     () => ({
       kind: "primary",
-      onClick: () => {
-        switch (deployState) {
-          case "ready":
-            // TODO: Run commands without writing to terminal and handle the
-            // `PgGlobal.deployState` inside the command implementation. The
-            // state has to be handled outside of the command because the deploy
-            // command is waiting for user input and re-running the command here
-            // would overwrite the user input.
-            return PgCommand.deploy.execute();
-
-          case "loading":
-            PgGlobal.update({ deployState: "paused" });
-            break;
-
-          case "paused":
-            PgGlobal.update({ deployState: "loading" });
-        }
-      },
+      onClick: () => PgCommand.deploy.execute(),
       disabled: buildLoading,
       loading: deployState === "cancelled",
       leftIcon:
@@ -71,29 +54,28 @@ const Deploy = () => {
           <Pause />
         ) : deployState === "paused" ? (
           <Triangle rotate="90deg" />
-        ) : null,
+        ) : (
+          <Rocket />
+        ),
     }),
     [buildLoading, deployState]
   );
 
   // First time state
   if (!deployed && !hasProgramKp) {
-    if (isImportedProgram)
-      return (
-        <Wrapper>
-          <Text>
-            <div>
-              Initial deployment needs a keypair. You can import it from
-              <Bold> Program ID</Bold> settings.
-            </div>
-          </Text>
-        </Wrapper>
-      );
+    if (!isImportedProgram) return null;
 
-    return null;
+    return (
+      <Wrapper>
+        <Text>
+          Initial deployment needs a keypair. You can import it from
+          <Bold> Program ID</Bold> settings.
+        </Text>
+      </Wrapper>
+    );
   }
 
-  if (error)
+  if (error) {
     return (
       <Wrapper>
         <Text kind="error">
@@ -102,8 +84,9 @@ const Deploy = () => {
         </Text>
       </Wrapper>
     );
+  }
 
-  if (!wallet)
+  if (!wallet) {
     return (
       <Wrapper>
         <Text>Your wallet must be connected for program deployments.</Text>
@@ -112,27 +95,28 @@ const Deploy = () => {
         </Button>
       </Wrapper>
     );
+  }
 
-  if (!hasUuid && !isImportedProgram)
+  if (!hasUuid && !isImportedProgram) {
     return (
       <Wrapper>
         <Text>
-          <div>
-            Build the program first or import a program from
-            <Bold> Program binary</Bold>.
-          </div>
+          Build the program first or import a program from
+          <Bold> Program binary</Bold>.
         </Text>
       </Wrapper>
     );
+  }
 
-  if (upgradable === false)
+  if (upgradable === false) {
     return (
       <Wrapper>
         <Text kind="warning">The program is not upgradable.</Text>
       </Wrapper>
     );
+  }
 
-  if (hasAuthority === false)
+  if (hasAuthority === false) {
     return (
       <Wrapper>
         <Text kind="warning">
@@ -140,6 +124,7 @@ const Deploy = () => {
         </Text>
       </Wrapper>
     );
+  }
 
   // Custom(uploaded) program deploy
   if (isImportedProgram) {

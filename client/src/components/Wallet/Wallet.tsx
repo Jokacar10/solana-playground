@@ -8,6 +8,7 @@ import Settings from "./Settings";
 import Transactions from "./Transactions";
 import Button from "../Button";
 import FadeIn from "../FadeIn";
+import ErrorBoundary from "../ErrorBoundary";
 import Img from "../Img";
 import Input from "../Input";
 import Menu, { MenuItemProps } from "../Menu";
@@ -21,7 +22,7 @@ import {
   PgView,
   PgWallet,
 } from "../../utils";
-import { useDarken, useStandardAccountChange } from "./hooks";
+import { useDarken } from "./hooks";
 import {
   useKeybind,
   useOnClickOutside,
@@ -33,8 +34,6 @@ const Wallet = () => {
   const show = useRenderOnChange(PgWallet.onDidChangeShow);
 
   const wallet = useWallet();
-
-  useStandardAccountChange();
 
   if (!show || !wallet) return null;
 
@@ -60,8 +59,10 @@ const Wallet = () => {
         style={{ zIndex: 1 }}
       >
         <WalletWrapper>
-          <WalletTop />
-          <WalletMain />
+          <ErrorBoundary>
+            <WalletTop />
+            <WalletMain />
+          </ErrorBoundary>
         </WalletWrapper>
       </Rnd>
     </>
@@ -76,14 +77,13 @@ const WalletBound = styled.div`
   ${({ theme }) => css`
     position: absolute;
     margin: ${theme.views.sidebar.right.title.height} 0.75rem
-      ${theme.views.bottom.default.height}
-      ${theme.views.sidebar.left.default.width};
+      ${theme.views.bottom.height} ${theme.views.sidebar.left.default.width};
     width: calc(100% - (0.75rem + ${theme.views.sidebar.left.default.width}));
     height: calc(
       100% -
         (
           ${theme.views.sidebar.right.title.height} +
-            ${theme.views.bottom.default.height}
+            ${theme.views.bottom.height}
         )
     );
     z-index: -1;
@@ -92,20 +92,15 @@ const WalletBound = styled.div`
 
 const WalletWrapper = styled(FadeIn)`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.default)};
+    ${PgTheme.toCss(theme.components.wallet.default)};
   `}
 `;
 
 const WalletTop = () => {
   const [rename, setRename] = useState(false);
 
-  const showRename = useCallback(() => {
-    setRename(true);
-  }, []);
-
-  const hideRename = useCallback(() => {
-    setRename(false);
-  }, []);
+  const showRename = useCallback(() => setRename(true), []);
+  const hideRename = useCallback(() => setRename(false), []);
 
   return (
     <WalletTopWrapper>
@@ -118,7 +113,7 @@ const WalletTop = () => {
 
 const WalletTopWrapper = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.top.default)};
+    ${PgTheme.toCss(theme.components.wallet.top.default)};
   `}
 `;
 
@@ -126,17 +121,18 @@ const WalletName = () => {
   const wallet = useWallet();
   const { darken, lighten } = useDarken();
 
-  const getAccountDisplayName = useCallback(
-    (wallet: Pick<WalletType, "name" | "publicKey">) => {
-      return (
-        PgCommon.withMaxLength(wallet.name, 12) +
-        ` - (${PgCommon.shorten(wallet.publicKey.toBase58())})`
-      );
-    },
-    []
-  );
+  const getAccountDisplayName = useCallback((wallet: WalletType) => {
+    const name = PgCommon.withMaxLength(wallet.name, 12);
 
-  // Show al lof the Playground Wallet accounts
+    // On standard wallet disconnect, the `publicKey` field appears `null` for a
+    // brief moment until `PgWallet.getConnectedStandardWallets` runs again.
+    //
+    // TODO: Make sure `publicKey` can never be `null`
+    if (!wallet.publicKey) return name;
+    return `${name} - (${PgCommon.shorten(wallet.publicKey.toBase58())})`;
+  }, []);
+
+  // Show all of the Playground Wallet accounts
   const pgAccounts: MenuItemProps[] = PgWallet.accounts.map((acc, i) => ({
     name: getAccountDisplayName(PgWallet.create(acc)),
     onClick: () => PgWallet.switch(i),
@@ -177,19 +173,19 @@ const WalletName = () => {
 
 const WalletTitleWrapper = styled.div`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.top.title.default)};
+    ${PgTheme.toCss(theme.components.wallet.top.title.default)};
   `}
 `;
 
 const WalletTitleIcon = styled(Img)`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.top.title.icon)};
+    ${PgTheme.toCss(theme.components.wallet.top.title.icon)};
   `}
 `;
 
 const WalletTitleText = styled.span`
   ${({ theme }) => css`
-    ${PgTheme.convertToCSS(theme.components.wallet.top.title.text)};
+    ${PgTheme.toCss(theme.components.wallet.top.title.text)};
   `}
 `;
 
@@ -272,10 +268,10 @@ const MainWrapper = styled.div`
     }
 
     &.${PgView.classNames.DARKEN}::after {
-      ${PgTheme.convertToCSS(theme.components.wallet.main.backdrop)};
+      ${PgTheme.toCss(theme.components.wallet.main.backdrop)};
     }
 
-    ${PgTheme.convertToCSS(theme.components.wallet.main.default)};
+    ${PgTheme.toCss(theme.components.wallet.main.default)};
   `}
 `;
 
